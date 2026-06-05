@@ -1,4 +1,11 @@
-"""Scraping engine — fetches job board URLs, extracts job postings via AI."""
+"""Scraping engine — fetches job board URLs, extracts job postings via AI.
+
+Changes from Phase 1:
+- Reads agent_config for system prompt + domain focus
+- Incorporates per-target goal into the prompt
+- Logs every run as an agent_session document
+- Accepts triggered_by="manual"|"cron" for session attribution
+"""
 import re
 from datetime import datetime
 from typing import Optional
@@ -8,27 +15,20 @@ from bson import ObjectId
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from app.claude_examples import extract_structured
+from app.routes.agent_config import DEFAULT_SYSTEM_PROMPT
 
 router = APIRouter(prefix="/api/scraper", tags=["scraper"])
 
 # ---------------------------------------------------------------------------
-# Categories available for AI classification
+# Categories
 # ---------------------------------------------------------------------------
 CATEGORIES = [
-    "Engineering",
-    "Marketing",
-    "Sales",
-    "HR",
-    "Finance",
-    "Design",
-    "Operations",
-    "Product",
-    "Legal",
-    "Other",
+    "Engineering", "Marketing", "Sales", "HR", "Finance",
+    "Design", "Operations", "Product", "Legal", "Other",
 ]
 
 # ---------------------------------------------------------------------------
-# JSON schema Claude uses to return structured job listings
+# Claude extraction schema
 # ---------------------------------------------------------------------------
 _JOB_EXTRACTION_SCHEMA = {
     "type": "object",
@@ -39,40 +39,25 @@ _JOB_EXTRACTION_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "title": {"type": "string", "description": "Job title"},
-                    "company": {
-                        "type": "string",
-                        "description": "Hiring company name",
-                    },
-                    "location": {
-                        "type": "string",
-                        "description": "Job location (city, remote, etc.)",
-                    },
+                    "title": {"type": "string"},
+                    "company": {"type": "string"},
+                    "location": {"type": "string"},
                     "description": {
                         "type": "string",
-                        "description": "Brief job description or summary (max 300 chars)",
+                        "description": "Brief job description (max 300 chars)",
                     },
-                    "url": {
-                        "type": "string",
-                        "description": "Direct link to the job posting if available",
-                    },
-                    "salary_range": {
-                        "type": "string",
-                        "description": "Salary or compensation range if mentioned",
-                    },
-                    "posted_at": {
-                        "type": "string",
-                        "description": "When the job was posted (as text, e.g. '2 days ago')",
-                    },
+                    "url": {"type": "string"},
+                    "salary_range": {"type": "string"},
+                    "posted_at": {"type": "string"},
                     "category": {
                         "type": "string",
                         "enum": CATEGORIES,
-                        "description": "Best-fit department category for this role",
+                        "description": "Best-fit department category",
                     },
                     "tags": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Key skills or technologies (max 5 tags)",
+                        "description": "Key skills or technologies (max 5)",
                     },
                 },
                 "required": ["title", "category"],
@@ -84,55 +69,76 @@ _JOB_EXTRACTION_SCHEMA = {
 
 
 # ---------------------------------------------------------------------------
-# HTML → plain text helper (no extra deps)
+# HTML → plain text
 # ---------------------------------------------------------------------------
 
 def _html_to_text(html: str) -> str:
-    """Strip HTML tags and collapse whitespace to plain text."""
-    # Drop script / style blocks entirely
     html = re.sub(
         r"<(script|style|noscript|head)[^>]*>.*?</(script|style|noscript|head)>",
-        " ",
-        html,
-        flags=re.DOTALL | re.IGNORECASE,
+        " ", html, flags=re.DOTALL | re.IGNORECASE,
     )
-    # Replace block-level tags with newlines for readability
     html = re.sub(
         r"<(br|p|div|li|tr|h[1-6]|section|article)[^>]*>",
-        "\n",
-        html,
-        flags=re.IGNORECASE,
+        "\n", html, flags=re.IGNORECASE,
     )
-    # Strip remaining tags
     text = re.sub(r"<[^>]+>", " ", html)
-    # Decode common HTML entities
     text = (
-        text.replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&nbsp;", " ")
-        .replace("&#39;", "'")
-        .replace("&quot;", '"')
+        text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+        .replace("&nbsp;", " ").replace("&#39;", "'").replace("&quot;", '"')
     )
-    # Collapse whitespace / blank lines
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
-# Core scraping logic (runs as background task)
+# Core scraping task
 # ---------------------------------------------------------------------------
 
-async def _do_scrape(db, target_id: str) -> None:
-    """Fetch the target URL, extract jobs with AI, store new postings."""
+async def _do_scrape(db, target_id: str, triggered_by: str = "manual") -> None:
+    """Fetch target URL, extract jobs with AI, store results, log session."""
     target = await db.scrape_targets.find_one({"_id": ObjectId(target_id)})
     if not target:
         return
 
     url: str = target["url"]
 
+    # ── 1. Load agent config ────────────────────────────────────────────────
+    agent_cfg = await db.agent_config.find_one({"_id": "default"}) or {}
+    base_prompt: str = agent_cfg.get("system_prompt") or DEFAULT_SYSTEM_PROMPT
+    domain_focus: list = agent_cfg.get("domain_focus") or []
+    target_goal: str = target.get("goal") or ""
+
+    # Build contextual system prompt
+    system_prompt = base_prompt
+    if domain_focus:
+        system_prompt += (
+            f"\n\nDomain focus areas: {', '.join(domain_focus)}. "
+            "Prioritise and flag roles that match these domains."
+        )
+    if target_goal:
+        system_prompt += f"\n\nTarget-specific goal: {target_goal}"
+
+    # ── 2. Open session log ─────────────────────────────────────────────────
+    session_doc = {
+        "target_id": target_id,
+        "target_name": target.get("name", ""),
+        "target_url": url,
+        "started_at": datetime.utcnow(),
+        "completed_at": None,
+        "status": "running",
+        "prompt_used": system_prompt,
+        "domain_focus": domain_focus,
+        "target_goal": target_goal,
+        "jobs_found": 0,
+        "new_jobs": 0,
+        "error": None,
+        "triggered_by": triggered_by,
+    }
+    session_res = await db.agent_sessions.insert_one(session_doc)
+    session_id = session_res.inserted_id
+
     try:
-        # ---- 1. Fetch the page ----
+        # ── 3. Fetch the page ───────────────────────────────────────────────
         async with httpx.AsyncClient(
             timeout=30,
             follow_redirects=True,
@@ -150,37 +156,31 @@ async def _do_scrape(db, target_id: str) -> None:
             resp.raise_for_status()
             raw_html = resp.text
 
-        # ---- 2. Convert to readable text ----
-        page_text = _html_to_text(raw_html)
-        # Keep first 12 000 chars to stay well within context limits
-        page_text = page_text[:12_000]
+        # ── 4. Extract text ─────────────────────────────────────────────────
+        page_text = _html_to_text(raw_html)[:12_000]
 
-        # ---- 3. AI extraction + categorisation ----
+        # ── 5. AI extraction ────────────────────────────────────────────────
         result = await extract_structured(
             user_message=(
-                f"Extract every distinct job posting from the following text scraped "
-                f"from: {url}\n\n"
-                f"For each posting provide: title, company, location, a short description "
-                f"(under 300 chars), the direct posting URL if visible, salary range if "
-                f"mentioned, when posted, the best category from the enum, and up to 5 "
-                f"skill/tech tags. If a field is missing, use an empty string.\n\n"
+                f"Extract every distinct job posting from the text below "
+                f"(scraped from: {url}).\n\n"
+                f"For each posting: title, company, location, short description "
+                f"(≤300 chars), URL if visible, salary range, posting date, "
+                f"category from the enum, and up to 5 skill tags. "
+                f"Empty string for missing fields.\n\n"
                 f"PAGE TEXT:\n{page_text}"
             ),
             schema=_JOB_EXTRACTION_SCHEMA,
             schema_name="job_listings",
-            schema_description="Structured job postings extracted from a job board page",
-            system_prompt=(
-                "You are an expert HR data extractor. Parse job board pages and return "
-                "clean structured data. Be thorough — extract every distinct role you can "
-                "identify. Assign the most specific category that fits the role."
-            ),
+            schema_description="Structured job postings from a job board",
+            system_prompt=system_prompt,
             max_tokens=4096,
         )
 
         jobs = result.get("jobs", [])
         new_count = 0
 
-        # ---- 4. Persist new postings (deduplicate by title+company+target) ----
+        # ── 6. Persist (deduplicate) ────────────────────────────────────────
         for job in jobs:
             title = job.get("title", "").strip()
             company = job.get("company", "").strip()
@@ -205,13 +205,15 @@ async def _do_scrape(db, target_id: str) -> None:
                 )
                 new_count += 1
 
-        # ---- 5. Update target stats ----
+        # ── 7. Update target + session ──────────────────────────────────────
         job_count = await db.job_postings.count_documents({"target_id": target_id})
+        now = datetime.utcnow()
+
         await db.scrape_targets.update_one(
             {"_id": ObjectId(target_id)},
             {
                 "$set": {
-                    "last_scraped_at": datetime.utcnow(),
+                    "last_scraped_at": now,
                     "status": "completed",
                     "last_error": None,
                     "job_count": job_count,
@@ -219,17 +221,28 @@ async def _do_scrape(db, target_id: str) -> None:
                 "$inc": {"scrape_count": 1},
             },
         )
-
-    except Exception as exc:
-        await db.scrape_targets.update_one(
-            {"_id": ObjectId(target_id)},
+        await db.agent_sessions.update_one(
+            {"_id": session_id},
             {
                 "$set": {
-                    "status": "error",
-                    "last_error": str(exc),
-                    "last_scraped_at": datetime.utcnow(),
+                    "completed_at": now,
+                    "status": "completed",
+                    "jobs_found": len(jobs),
+                    "new_jobs": new_count,
                 }
             },
+        )
+
+    except Exception as exc:
+        now = datetime.utcnow()
+        err_str = str(exc)
+        await db.scrape_targets.update_one(
+            {"_id": ObjectId(target_id)},
+            {"$set": {"status": "error", "last_error": err_str, "last_scraped_at": now}},
+        )
+        await db.agent_sessions.update_one(
+            {"_id": session_id},
+            {"$set": {"completed_at": now, "status": "error", "error": err_str}},
         )
 
 
@@ -255,7 +268,7 @@ async def trigger_scrape(
     await db.scrape_targets.update_one(
         {"_id": oid}, {"$set": {"status": "running", "last_error": None}}
     )
-    background_tasks.add_task(_do_scrape, db, target_id)
+    background_tasks.add_task(_do_scrape, db, target_id, "manual")
     return {"message": "Scrape started", "target_id": target_id}
 
 
@@ -263,11 +276,13 @@ async def trigger_scrape(
 async def trigger_all_scrapes(request: Request, background_tasks: BackgroundTasks):
     db = request.app.state.db
     count = 0
-    async for target in db.scrape_targets.find({"active": True, "status": {"$ne": "running"}}):
+    async for target in db.scrape_targets.find(
+        {"active": True, "status": {"$ne": "running"}}
+    ):
         tid = str(target["_id"])
         await db.scrape_targets.update_one(
             {"_id": target["_id"]}, {"$set": {"status": "running", "last_error": None}}
         )
-        background_tasks.add_task(_do_scrape, db, tid)
+        background_tasks.add_task(_do_scrape, db, tid, "manual")
         count += 1
     return {"message": f"Started scraping {count} active targets.", "count": count}

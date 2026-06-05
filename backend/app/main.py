@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -6,7 +7,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 from app import analytics, error_tracker
 from app.config import settings
-from app.routes import jobs, scraper, targets
+from app.routes import agent_config, jobs, scraper, sessions, targets
 
 
 @asynccontextmanager
@@ -16,17 +17,32 @@ async def lifespan(app: FastAPI):
     db = client[settings.mongo_db]
     app.state.db = db
 
-    # Ensure indexes for fast look-ups
+    # Indexes
     await db.scrape_targets.create_index("url", unique=True)
     await db.scrape_targets.create_index("active")
+    await db.scrape_targets.create_index("cron_enabled")
+    await db.scrape_targets.create_index("cron_next_run")
     await db.job_postings.create_index("target_id")
     await db.job_postings.create_index("category")
     await db.job_postings.create_index("scraped_at")
     await db.job_postings.create_index([("title", "text"), ("company", "text")])
+    await db.agent_sessions.create_index("target_id")
+    await db.agent_sessions.create_index("started_at")
+    await db.agent_sessions.create_index("status")
+
+    # Start cron scheduler
+    from app.scheduler import scheduler_loop
+    scheduler_task = asyncio.create_task(scheduler_loop(db))
+    app.state.scheduler_task = scheduler_task
 
     try:
         yield
     finally:
+        scheduler_task.cancel()
+        try:
+            await scheduler_task
+        except asyncio.CancelledError:
+            pass
         client.close()
 
 
@@ -45,7 +61,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Builder-internal error tracking + analytics
 error_tracker.install(app)
 analytics.install(app)
 
@@ -53,6 +68,8 @@ analytics.install(app)
 app.include_router(targets.router)
 app.include_router(scraper.router)
 app.include_router(jobs.router)
+app.include_router(agent_config.router)
+app.include_router(sessions.router)
 
 
 @app.get("/api/health")
