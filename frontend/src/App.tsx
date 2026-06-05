@@ -1,14 +1,15 @@
 import { useState } from 'react';
-import { Bot, Briefcase, Clock, FileText, Globe, Radar } from 'lucide-react';
+import { Activity, Bot, Briefcase, Clock, FileText, Globe, Radar } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import AgentConfigPage from '@/pages/AgentConfigPage';
 import DocumentsPage from '@/pages/DocumentsPage';
 import JobFeedPage from '@/pages/JobFeedPage';
+import MonitoringPage from '@/pages/MonitoringPage';
 import SessionsPage from '@/pages/SessionsPage';
 import TargetsPage from '@/pages/TargetsPage';
 
-type Tab = 'feed' | 'targets' | 'agent' | 'sessions' | 'docs';
+type Tab = 'feed' | 'targets' | 'agent' | 'sessions' | 'docs' | 'monitor';
 
 const TABS: { id: Tab; label: string; icon: typeof Briefcase }[] = [
   { id: 'feed',     label: 'Job Feed',     icon: Briefcase  },
@@ -16,14 +17,16 @@ const TABS: { id: Tab; label: string; icon: typeof Briefcase }[] = [
   { id: 'agent',    label: 'Agent Config', icon: Bot        },
   { id: 'sessions', label: 'Sessions',     icon: Clock      },
   { id: 'docs',     label: 'Documents',    icon: FileText   },
+  { id: 'monitor',  label: 'Monitor',      icon: Activity   },
 ];
 
 const HERO: Record<Tab, { title: string; sub: string }> = {
-  feed:     { title: 'Job Intelligence Feed',   sub: 'AI-categorised job postings scraped from your configured sources.' },
-  targets:  { title: 'URL Manager',             sub: 'Configure job board sources, per-target goals, and cron schedules.' },
-  agent:    { title: 'Agent Configuration',     sub: 'Shape the AI system prompt, domain focus, and per-target objectives.' },
-  sessions: { title: 'Agent Session Monitor',   sub: 'Live log of every scrape run — prompts used, results, and errors.' },
-  docs:     { title: 'Document Library',        sub: 'Upload interview documents per job and prep with the AI coach.' },
+  feed:     { title: 'Job Intelligence Feed',      sub: 'AI-categorised job postings scraped from your configured sources.' },
+  targets:  { title: 'URL Manager',                sub: 'Configure job board sources, per-target goals, and cron schedules.' },
+  agent:    { title: 'Agent Configuration',        sub: 'Shape the AI system prompt, domain focus, and per-target objectives.' },
+  sessions: { title: 'Agent Session Monitor',      sub: 'Live log of every scrape run — prompts used, results, and errors.' },
+  docs:     { title: 'Document Library',           sub: 'Upload interview documents per job and prep with the AI coach.' },
+  monitor:  { title: 'Monitoring Dashboard',       sub: 'Performance analytics, hallucination detection, and live audit log.' },
 };
 
 export default function App() {
@@ -87,6 +90,7 @@ export default function App() {
         {tab === 'agent'    && <AgentConfigPage />}
         {tab === 'sessions' && <SessionsPage />}
         {tab === 'docs'     && <DocumentsPage initialJobId={docsJobFilter} />}
+        {tab === 'monitor'  && <MonitoringPage />}
       </main>
     </div>
   );

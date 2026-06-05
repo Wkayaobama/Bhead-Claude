@@ -7,7 +7,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 from app import analytics, error_tracker
 from app.config import settings
-from app.routes import agent_config, documents, jobs, scraper, sessions, targets
+from app.routes import agent_config, documents, jobs, monitor, scraper, sessions, targets
 
 
 @asynccontextmanager
@@ -73,6 +73,7 @@ app.include_router(jobs.router)
 app.include_router(agent_config.router)
 app.include_router(sessions.router)
 app.include_router(documents.router)
+app.include_router(monitor.router)
 
 
 @app.get("/api/health")
