@@ -1,90 +1,82 @@
-import { useEffect, useState } from 'react';
-import { ArrowRight, Sparkles } from 'lucide-react';
+import { useState } from 'react';
+import { Briefcase, Globe, Radar } from 'lucide-react';
 
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { cn } from '@/lib/utils';
+import JobFeedPage from '@/pages/JobFeedPage';
+import TargetsPage from '@/pages/TargetsPage';
 
-type Hello = { message: string; count: number };
+type Tab = 'feed' | 'targets';
+
+const TABS: { id: Tab; label: string; icon: typeof Briefcase }[] = [
+  { id: 'feed', label: 'Job Feed', icon: Briefcase },
+  { id: 'targets', label: 'URL Manager', icon: Globe },
+];
 
 export default function App() {
-  const [data, setData] = useState<Hello | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetch('/api/hello')
-      .then((r) => (r.ok ? r.json() : Promise.reject(r.statusText)))
-      .then(setData)
-      .catch((e) => setError(String(e)));
-  }, []);
+  const [tab, setTab] = useState<Tab>('feed');
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-background">
-      {/* Soft top-edge gradient — gives the page atmosphere without
-          fighting whatever the app actually does. Replace freely. */}
+      {/* Gradient atmosphere */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[480px] bg-gradient-to-b from-primary/10 via-background to-background"
+        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-64 bg-gradient-to-b from-primary/10 via-background to-background"
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute -top-32 left-1/2 -z-10 h-[420px] w-[840px] -translate-x-1/2 rounded-full bg-primary/20 blur-3xl"
+        className="pointer-events-none absolute -top-24 left-1/2 -z-10 h-96 w-[700px] -translate-x-1/2 rounded-full bg-primary/15 blur-3xl"
       />
 
-      <main className="container mx-auto max-w-3xl px-6 py-24 animate-fade-in">
-        <Badge variant="secondary" className="mb-6 gap-1.5">
-          <Sparkles className="h-3 w-3" />
-          Studio starter
-        </Badge>
+      {/* Nav */}
+      <header className="sticky top-0 z-20 border-b border-border/60 bg-background/80 backdrop-blur-md">
+        <div className="container mx-auto max-w-5xl px-6">
+          <div className="flex h-14 items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary">
+                <Radar className="h-4 w-4 text-primary-foreground" />
+              </div>
+              <span className="font-semibold text-sm tracking-tight">HR Scout</span>
+            </div>
 
-        <h1 className="bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-transparent">
-          Your app starts here.
-        </h1>
-
-        <p className="mt-5 max-w-xl text-lg text-muted-foreground">
-          React + FastAPI + a database, pre-wired and ready. Tell Studio
-          what to build and it'll replace this page with the real thing.
-        </p>
-
-        <div className="mt-10">
-          <Card>
-            <CardHeader>
-              <CardTitle>Backend handshake</CardTitle>
-              <CardDescription>
-                The frontend pings <code className="rounded bg-muted px-1.5 py-0.5 text-xs">/api/hello</code> and the
-                backend counts the visit in the database.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {error ? (
-                <p className="text-sm font-medium text-destructive">Error: {error}</p>
-              ) : data ? (
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <p className="text-2xl font-semibold tracking-tight">
-                      {data.message}
-                    </p>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      Visited <span className="font-medium text-foreground">{data.count}</span>{' '}
-                      {data.count === 1 ? 'time' : 'times'}
-                    </p>
-                  </div>
-                  <Button variant="outline" size="sm" className="shrink-0">
-                    Refresh <ArrowRight className="h-4 w-4" />
-                  </Button>
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">Loading…</p>
-              )}
-            </CardContent>
-          </Card>
+            {/* Tabs */}
+            <nav className="flex items-center gap-1">
+              {TABS.map(({ id, label, icon: Icon }) => (
+                <button
+                  key={id}
+                  onClick={() => setTab(id)}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                    tab === id
+                      ? 'bg-primary/10 text-primary'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+                  )}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {label}
+                </button>
+              ))}
+            </nav>
+          </div>
         </div>
+      </header>
+
+      {/* Hero */}
+      <div className="container mx-auto max-w-5xl px-6 pt-12 pb-8">
+        <div className="space-y-1.5">
+          <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-transparent">
+            {tab === 'feed' ? 'Job Intelligence Feed' : 'Scrape Target Manager'}
+          </h1>
+          <p className="text-muted-foreground">
+            {tab === 'feed'
+              ? 'AI-categorised job postings scraped from your configured sources.'
+              : 'Manage the job board URLs HR Scout monitors for new postings.'}
+          </p>
+        </div>
+      </div>
+
+      {/* Page content */}
+      <main className="container mx-auto max-w-5xl px-6 pb-16">
+        {tab === 'feed' ? <JobFeedPage /> : <TargetsPage />}
       </main>
     </div>
   );
