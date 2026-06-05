@@ -1,0 +1,111 @@
+services:
+  frontend:
+    build: ./frontend
+    volumes:
+      - ./frontend:/app
+      - frontend-node-modules:/app/node_modules
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+      # Inherits from the orchestrator's env so Vite's allowedHosts knows
+      # which suffix to permit (e.g. `.preview.staging.understand.tech`
+      # in prod, `.localhost` in dev). Defaulted in compose so a workspace
+      # started by hand without the orchestrator still boots.
+      - PREVIEW_DOMAIN_SUFFIX=${PREVIEW_DOMAIN_SUFFIX:-localhost}
+    depends_on:
+      - backend
+    # Cap one app's resources so a runaway Vite HMR / build can't starve
+    # the EC2 host or the orchestrator. Reservations are the floor the
+    # scheduler tries to keep available; limits are the hard ceiling.
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 768M
+        reservations:
+          memory: 128M
+    networks:
+      default: {}
+      proxy:
+        aliases:
+          - ${PROJECT_ID:-app}
+
+  backend:
+    build: ./backend
+    volumes:
+      - ./backend/app:/app/app
+    # Make the docker host reachable as `host.docker.internal` on Linux
+    # (no-op on Docker Desktop where the alias is built-in). The backend
+    # uses this to reach the orchestrator's Anthropic proxy at
+    # `host.docker.internal:8001`, which is the host port the
+    # orchestrator publishes in dev and the EC2 host in prod.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - PROJECT_NAME=${PROJECT_ID:-app}
+      - MONGO_URL=mongodb://mongo:27017
+      - MONGO_DB=${MONGO_DB:-app}
+      # AI / LLM runtime. UT_API_KEY (further down) authenticates
+      # against the UT LLM gateway at UT_LLM_BASE_URL. NEVER expose
+      # a raw Anthropic key here — `claude_examples.get_client()`
+      # wires the Anthropic SDK to talk to the gateway using the UT
+      # bearer. AI_MODEL is just a model identifier, not a secret.
+      #
+      # `host.docker.internal:8001` is the orchestrator's published port
+      # both in dev (top-level compose maps 8001:8001) and in prod (the
+      # orchestrator runs directly on the EC2 host). Generated apps run
+      # in their own compose project with their own networks, so the
+      # in-network alias `orchestrator` from the App Builder stack is
+      # not reachable here — only the host bridge is.
+      - UT_LLM_BASE_URL=${UT_LLM_BASE_URL:-http://host.docker.internal:8001/api/llm/anthropic}
+      - AI_MODEL=${AI_MODEL:-claude-sonnet-4-6}
+      # UT customer-mode API key + the API host it talks to. Used by
+      # app.ut_usage to report prompt consumption against the key
+      # owner's quota. `UNDERSTAND_API_URL` is the customer-facing UT
+      # API (api-key auth) — `developer.understand.tech` in prod, the
+      # staging API ALB in staging. Distinct from `UNDERSTAND_APP_URL`,
+      # which is the cookie-auth UT API the orchestrator itself uses
+      # for login + apikey mint; the generated app never calls it.
+      - UT_API_KEY=${UT_API_KEY:-}
+      - UNDERSTAND_API_URL=${UNDERSTAND_API_URL:-https://developer.understand.tech}
+      # Required for the "Understand AI" model (UT v3 /chat). Empty
+      # when the user's account has no encryption activated; the
+      # user's encryption secret when /account reports
+      # `has_encryption=true`. The orchestrator writes the right
+      # value into `.env` at project-creation time.
+      - UT_ENCRYPTION_SECRET=${UT_ENCRYPTION_SECRET:-}
+    depends_on:
+      - mongo
+    # Backend joins the `proxy` network for Traefik routing of any
+    # backend-exposed routes. The orchestrator Anthropic proxy is
+    # reached via the host bridge above, not by docker DNS.
+    networks:
+      - default
+      - proxy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 1024M
+        reservations:
+          memory: 128M
+
+  mongo:
+    image: mongo:7
+    volumes:
+      - mongo-data:/data/db
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 768M
+        reservations:
+          memory: 128M
+
+volumes:
+  mongo-data:
+  frontend-node-modules:
+
+networks:
+  default:
+  proxy:
+    external: true
