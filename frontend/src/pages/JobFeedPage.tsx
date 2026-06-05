@@ -5,6 +5,7 @@ import {
   Briefcase,
   Building2,
   DollarSign,
+  Download,
   ExternalLink,
   Loader2,
   MapPin,
@@ -79,6 +80,44 @@ function timeAgo(iso: string): string {
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
 }
+
+// ─── CSV export utility ───────────────────────────────────────────────────────
+
+function exportToCSV(jobs: Job[]): void {
+  const HEADERS = [
+    'Title', 'Company', 'Location', 'Category', 'Salary Range',
+    'Tags', 'Source', 'Posted At', 'Scraped At', 'URL',
+  ];
+
+  const escape = (val: unknown): string => {
+    const s = val == null ? '' : String(val).replace(/"/g, '""');
+    return /[",\n\r]/.test(s) ? `"${s}"` : s;
+  };
+
+  const rows = jobs.map((j) => [
+    escape(j.title),
+    escape(j.company),
+    escape(j.location),
+    escape(j.category),
+    escape(j.salary_range),
+    escape((j.tags ?? []).join('; ')),
+    escape(j.target_name),
+    escape(j.posted_at),
+    escape(j.scraped_at ? new Date(j.scraped_at).toISOString() : ''),
+    escape(j.url),
+  ].join(','));
+
+  const csv = [HEADERS.join(','), ...rows].join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `hr-scout-jobs-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function JobFeedPage({ onOpenDocs }: Props) {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -209,6 +248,16 @@ export default function JobFeedPage({ onOpenDocs }: Props) {
         </form>
         <Button variant="outline" size="icon" onClick={handleRefresh} disabled={refreshing}>
           <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => exportToCSV(jobs)}
+          disabled={jobs.length === 0}
+          title="Export current view to CSV"
+        >
+          <Download className="h-4 w-4 mr-1.5" />
+          Export CSV
         </Button>
       </div>
 
