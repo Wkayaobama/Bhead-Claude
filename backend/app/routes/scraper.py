@@ -1,10 +1,11 @@
 """Scraping engine — fetches job board URLs, extracts job postings via AI.
 
-Changes from Phase 1:
-- Reads agent_config for system prompt + domain focus
-- Incorporates per-target goal into the prompt
-- Logs every run as an agent_session document
-- Accepts triggered_by="manual"|"cron" for session attribution
+Routing logic:
+- jobup.ch URLs  → Apify actor (lexis-solutions/jobup-scraper) fetches leaf
+                   pages by job ID and returns structured data; Claude then
+                   normalises + categorises.
+- All other URLs → direct HTTP fetch + HTML-to-text + Claude extraction
+                   (original path, unchanged).
 """
 import re
 from datetime import datetime
@@ -15,7 +16,12 @@ from bson import ObjectId
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from app.claude_examples import extract_structured
+from app.config import settings
 from app.routes.agent_config import DEFAULT_SYSTEM_PROMPT
+from app.routes.apify_scraper import (
+    apify_item_to_text_block,
+    run_apify_scrape,
+)
 
 router = APIRouter(prefix="/api/scraper", tags=["scraper"])
 
@@ -66,6 +72,15 @@ _JOB_EXTRACTION_SCHEMA = {
     },
     "required": ["jobs"],
 }
+
+
+# ---------------------------------------------------------------------------
+# URL routing helper
+# ---------------------------------------------------------------------------
+
+def _is_jobup_url(url: str) -> bool:
+    """Return True for any jobup.ch URL — these go through the Apify path."""
+    return "jobup.ch" in url.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -138,37 +153,63 @@ async def _do_scrape(db, target_id: str, triggered_by: str = "manual") -> None:
     session_id = session_res.inserted_id
 
     try:
-        # ── 3. Fetch the page ───────────────────────────────────────────────
-        async with httpx.AsyncClient(
-            timeout=30,
-            follow_redirects=True,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0 Safari/537.36"
-                ),
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-            },
-        ) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            raw_html = resp.text
+        # ── 3. Gather page text (Apify path OR direct HTML path) ────────────
+        if _is_jobup_url(url):
+            # ── Apify leaf-page path ────────────────────────────────────────
+            apify_token = settings.apify_api_key
+            if not apify_token:
+                raise RuntimeError(
+                    "APIFY_API_KEY is not configured. "
+                    "Add your Apify API token in the app settings to enable "
+                    "jobup.ch scraping."
+                )
+            raw_items = await run_apify_scrape(url, apify_token)
+            if not raw_items:
+                raise RuntimeError(
+                    "Apify returned 0 items for this URL. "
+                    "Check that the jobup.ch search URL is valid and public."
+                )
+            # Convert structured Apify items → human-readable text blocks
+            page_text = "\n\n".join(
+                apify_item_to_text_block(i, item)
+                for i, item in enumerate(raw_items)
+            )[:15_000]
+            source_label = (
+                f"Apify jobup.ch scraper — {len(raw_items)} leaf-page items "
+                f"fetched from: {url}"
+            )
+        else:
+            # ── Direct HTTP + HTML strip path (original) ────────────────────
+            async with httpx.AsyncClient(
+                timeout=30,
+                follow_redirects=True,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/120.0 Safari/537.36"
+                    ),
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.5",
+                },
+            ) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                raw_html = resp.text
 
-        # ── 4. Extract text ─────────────────────────────────────────────────
-        page_text = _html_to_text(raw_html)[:12_000]
+            page_text = _html_to_text(raw_html)[:12_000]
+            source_label = url
 
-        # ── 5. AI extraction ────────────────────────────────────────────────
+        # ── 4. AI extraction (shared for both paths) ────────────────────────
         result = await extract_structured(
             user_message=(
-                f"Extract every distinct job posting from the text below "
-                f"(scraped from: {url}).\n\n"
+                f"Extract every distinct job posting from the data below "
+                f"(source: {source_label}).\n\n"
                 f"For each posting: title, company, location, short description "
-                f"(≤300 chars), URL if visible, salary range, posting date, "
+                f"(≤300 chars), URL if present, salary range, posting date, "
                 f"category from the enum, and up to 5 skill tags. "
                 f"Empty string for missing fields.\n\n"
-                f"PAGE TEXT:\n{page_text}"
+                f"DATA:\n{page_text}"
             ),
             schema=_JOB_EXTRACTION_SCHEMA,
             schema_name="job_listings",

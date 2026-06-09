@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     # high-volume simple tasks. Just a model identifier — not a secret.
     ai_model: str = "claude-sonnet-4-6"
 
+    # Apify token — used to call the jobup.ch scraper actor.
+    # Set via APIFY_API_KEY in .env
+    apify_api_key: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

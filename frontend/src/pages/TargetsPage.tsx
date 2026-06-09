@@ -11,7 +11,9 @@ import {
   RefreshCw,
   Target,
   Trash2,
+  Wand2,
   X,
+  Zap,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -75,6 +77,19 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
         checked ? 'translate-x-4' : 'translate-x-1'
       )} />
     </button>
+  );
+}
+
+function isJobupUrl(url: string): boolean {
+  return url.toLowerCase().includes('jobup.ch');
+}
+
+function ApifyBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
+      <Zap className="h-3 w-3" />
+      Apify leaf-pages
+    </span>
   );
 }
 
@@ -232,6 +247,21 @@ export default function TargetsPage() {
                 <Input id="f-desc" placeholder="Optional notes" value={form.description}
                   onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
               </div>
+
+              {/* Apify info banner — shown when URL is a jobup.ch URL */}
+              {isJobupUrl(form.url) && (
+                <div className="flex items-start gap-2.5 rounded-lg border border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30 px-4 py-3">
+                  <Zap className="h-4 w-4 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
+                  <div className="text-xs text-emerald-800 dark:text-emerald-300">
+                    <span className="font-semibold">Apify scraper detected.</span>{' '}
+                    This source will be scraped via the Apify jobup.ch actor — each
+                    individual job posting (leaf page) is fetched by ID for rich,
+                    structured data. Make sure{' '}
+                    <span className="font-mono font-medium">APIFY_API_KEY</span> is
+                    configured in your app settings.
+                  </div>
+                </div>
+              )}
               {/* Goal field — step 8 */}
               <div className="space-y-1.5">
                 <Label htmlFor="f-goal" className="flex items-center gap-1.5">
@@ -330,6 +360,7 @@ export default function TargetsPage() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium text-sm">{t.name}</span>
                       <StatusBadge status={t.status ?? 'idle'} />
+                      {isJobupUrl(t.url) && <ApifyBadge />}
                       {t.cron_enabled && (
                         <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
                           <Clock className="h-3 w-3" />
