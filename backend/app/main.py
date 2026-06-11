@@ -7,7 +7,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 from app import analytics, error_tracker
 from app.config import settings
-from app.routes import agent_config, documents, jobs, monitor, scraper, sessions, targets
+from app.routes import admin, agent_config, documents, jobs, monitor, scraper, sessions, targets
 
 
 @asynccontextmanager
@@ -67,6 +67,7 @@ error_tracker.install(app)
 analytics.install(app)
 
 # Feature routers
+app.include_router(admin.router)
 app.include_router(targets.router)
 app.include_router(scraper.router)
 app.include_router(jobs.router)

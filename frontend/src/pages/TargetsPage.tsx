@@ -10,6 +10,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  ShieldOff,
   Target,
   Trash2,
   X,
@@ -219,6 +220,11 @@ export default function TargetsPage() {
   // Which target card has the Apify panel open
   const [apifyPanelId, setApifyPanelId] = useState<string | null>(null);
 
+  // Revoke All Keys
+  const [revokeConfirm, setRevokeConfirm] = useState(false);
+  const [revoking, setRevoking]           = useState(false);
+  const [revokeResult, setRevokeResult]   = useState<{ ok: boolean; message: string } | null>(null);
+
   const fetchTargets = async () => {
     try {
       const res = await fetch('/api/targets');
@@ -288,6 +294,24 @@ export default function TargetsPage() {
   };
 
   const handleScrapeAll = async () => { await fetch('/api/scraper/run-all', { method: 'POST' }); fetchTargets(); };
+
+  // ── Revoke All Keys ─────────────────────────────────────────────────────────
+  // Clears session-stored API keys from the backend database.
+  // The Apify browser localStorage token is intentionally NOT touched.
+  const handleRevokeKeys = async () => {
+    setRevoking(true);
+    setRevokeResult(null);
+    try {
+      const res = await fetch('/api/admin/revoke-keys', { method: 'POST' });
+      const data = await res.json();
+      setRevokeResult({ ok: res.ok, message: data.message ?? 'Done.' });
+    } catch {
+      setRevokeResult({ ok: false, message: 'Request failed — check backend logs.' });
+    } finally {
+      setRevoking(false);
+      setRevokeConfirm(false);
+    }
+  };
 
   // ── Apify scrape ─────────────────────────────────────────────────────────────
   const handleApifyScrape = async (id: string, apifyToken: string) => {
