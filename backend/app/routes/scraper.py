@@ -286,7 +286,8 @@ async def _do_scrape(db, target_id: str, triggered_by: str = "manual") -> None:
 # ---------------------------------------------------------------------------
 
 async def _do_scrape_apify(
-    db, target_id: str, apify_token: str, triggered_by: str = "manual"
+    db, target_id: str, apify_token: str, triggered_by: str = "manual",
+    max_items: int | None = None,
 ) -> None:
     """
     Run the Apify jobup.ch actor, wait for completion, extract jobs with AI,
@@ -320,7 +321,7 @@ async def _do_scrape_apify(
 
     try:
         # ── 1. Run Apify actor and retrieve leaf-page items ──────────────────
-        raw_items = await run_apify_scrape(url, apify_token)
+        raw_items = await run_apify_scrape(url, apify_token, max_items=max_items)
         if not raw_items:
             raise RuntimeError(
                 "Apify returned 0 items. "
@@ -369,6 +370,7 @@ async def _do_scrape_apify(
 
 class ApifyRunRequest(BaseModel):
     apify_token: str
+    max_items: int | None = None   # optional cap; None = actor default
 
 
 @router.post("/run/{target_id}")
@@ -424,7 +426,8 @@ async def trigger_apify_scrape(
         {"_id": oid}, {"$set": {"status": "running", "last_error": None}}
     )
     background_tasks.add_task(
-        _do_scrape_apify, db, target_id, body.apify_token.strip(), "manual"
+        _do_scrape_apify, db, target_id, body.apify_token.strip(), "manual",
+        body.max_items,
     )
     return {"message": "Apify scrape started", "target_id": target_id}
 

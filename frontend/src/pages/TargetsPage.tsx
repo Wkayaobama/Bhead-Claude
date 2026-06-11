@@ -124,14 +124,15 @@ function StatusBadge({ status }: { status: ScrapeTarget['status'] }) {
 interface ApifyPanelProps {
   targetId: string;
   isRunning: boolean;
-  onRun: (targetId: string, token: string) => Promise<void>;
+  onRun: (targetId: string, token: string, maxItems: number | null) => Promise<void>;
   onClose: () => void;
 }
 
 function ApifyPanel({ targetId, isRunning, onRun, onClose }: ApifyPanelProps) {
-  const [token, setToken] = useState<string>(() =>
+  const [token, setToken]       = useState<string>(() =>
     localStorage.getItem(APIFY_TOKEN_KEY) ?? ''
   );
+  const [maxItems, setMaxItems] = useState<string>('50');
   const [localError, setLocalError] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -142,7 +143,8 @@ function ApifyPanel({ targetId, isRunning, onRun, onClose }: ApifyPanelProps) {
     if (!token.trim()) { setLocalError('Apify token is required.'); return; }
     setLocalError('');
     localStorage.setItem(APIFY_TOKEN_KEY, token.trim());
-    await onRun(targetId, token.trim());
+    const cap = parseInt(maxItems, 10);
+    await onRun(targetId, token.trim(), isNaN(cap) || cap <= 0 ? null : cap);
   };
 
   return (
@@ -161,6 +163,7 @@ function ApifyPanel({ targetId, isRunning, onRun, onClose }: ApifyPanelProps) {
         structured data. Enter your Apify API token to start.
       </p>
       <form onSubmit={handleSubmit} className="space-y-2">
+        {/* STEP 1 — API token field (existing) */}
         <div className="flex gap-2">
           <div className="relative flex-1">
             <KeyRound className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-emerald-600 dark:text-emerald-500 pointer-events-none" />
@@ -188,6 +191,29 @@ function ApifyPanel({ targetId, isRunning, onRun, onClose }: ApifyPanelProps) {
             }
           </Button>
         </div>
+
+        {/* STEP 2 — Max Items input, directly beneath the API field */}
+        <div className="flex items-center gap-2">
+          <label htmlFor="apify-max-items" className="text-[11px] text-emerald-700 dark:text-emerald-400 whitespace-nowrap shrink-0">
+            Max items
+          </label>
+          <Input
+            id="apify-max-items"
+            type="number"
+            min={1}
+            max={1000}
+            step={1}
+            value={maxItems}
+            onChange={(e) => setMaxItems(e.target.value)}
+            className="h-7 w-24 text-xs border-emerald-300 dark:border-emerald-700 focus-visible:ring-emerald-500"
+            disabled={isRunning}
+            placeholder="50"
+          />
+          <span className="text-[11px] text-emerald-600 dark:text-emerald-500">
+            leaf pages fetched per run
+          </span>
+        </div>
+
         {localError && (
           <p className="text-xs text-destructive flex items-center gap-1">
             <AlertCircle className="h-3 w-3" />{localError}
@@ -314,13 +340,15 @@ export default function TargetsPage() {
   };
 
   // ── Apify scrape ─────────────────────────────────────────────────────────────
-  const handleApifyScrape = async (id: string, apifyToken: string) => {
+  const handleApifyScrape = async (id: string, apifyToken: string, maxItems: number | null) => {
     setApifyingIds((s) => new Set(s).add(id));
     try {
+      const payload: Record<string, unknown> = { apify_token: apifyToken };
+      if (maxItems !== null) payload.max_items = maxItems;
       const res = await fetch(`/api/scraper/run-apify/${id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apify_token: apifyToken }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) {
         const err = await res.json();

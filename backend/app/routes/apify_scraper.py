@@ -102,20 +102,28 @@ def apify_item_to_text_block(idx: int, item: dict[str, Any]) -> str:
 async def run_apify_scrape(
     target_url: str,
     apify_token: str,
+    max_items: int | None = None,
 ) -> list[dict[str, Any]]:
     """
     Trigger the Apify jobup-scraper actor, wait for completion,
     and return the dataset items.
 
+    max_items: optional cap on the number of results returned by the actor.
+               None means no limit (actor default).
+
     Raises RuntimeError on actor failure or timeout.
     """
 
     # ── 1. Start the actor run ──────────────────────────────────────────────
+    actor_input: dict[str, Any] = {"startUrls": [{"url": target_url}]}
+    if max_items and max_items > 0:
+        actor_input["maxItems"] = max_items
+
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
             f"{APIFY_BASE}/acts/{ACTOR_ID}/runs",
             params={"token": apify_token},
-            json={"startUrls": [{"url": target_url}]},
+            json=actor_input,
         )
         resp.raise_for_status()
         run_data = resp.json()["data"]
