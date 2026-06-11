@@ -362,11 +362,89 @@ export default function TargetsPage() {
               <RefreshCw className="h-4 w-4 mr-1.5" />Scan All
             </Button>
           )}
+          {/* STEP 1 — Primary action button with loading state */}
+          {!revokeConfirm && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:border-destructive"
+              onClick={() => { setRevokeResult(null); setRevokeConfirm(true); }}
+              disabled={revoking}
+            >
+              {revoking
+                ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                : <ShieldOff className="h-3.5 w-3.5 mr-1.5" />}
+              Revoke All Keys
+            </Button>
+          )}
           <Button size="sm" onClick={openAdd}>
             <Plus className="h-4 w-4 mr-1.5" />Add URL
           </Button>
         </div>
       </div>
+
+      {/* STEP 2 — Inline confirmation prompt */}
+      {revokeConfirm && (
+        <div className="flex items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 animate-fade-in">
+          <ShieldOff className="h-4 w-4 text-destructive shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-destructive">Revoke all session-stored keys?</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Clears API tokens from the database. The Apify browser token is preserved so scraping stays functional.
+            </p>
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <Button
+              size="sm"
+              variant="destructive"
+              className="h-7 text-xs"
+              onClick={handleRevokeKeys}
+              disabled={revoking}
+            >
+              {revoking
+                ? <><Loader2 className="h-3 w-3 mr-1 animate-spin" />Revoking…</>
+                : 'Yes, revoke'}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs"
+              onClick={() => setRevokeConfirm(false)}
+              disabled={revoking}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* STEP 3 — Result banner (success / error) */}
+      {revokeResult && !revokeConfirm && (
+        <div className={cn(
+          'flex items-center gap-3 rounded-lg border px-4 py-3 animate-fade-in',
+          revokeResult.ok
+            ? 'border-green-200 bg-green-50 dark:border-green-800/60 dark:bg-green-950/20'
+            : 'border-destructive/30 bg-destructive/5'
+        )}>
+          {revokeResult.ok
+            ? <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400 shrink-0" />
+            : <AlertCircle className="h-4 w-4 text-destructive shrink-0" />}
+          <p className={cn(
+            'flex-1 text-xs',
+            revokeResult.ok
+              ? 'text-green-800 dark:text-green-300'
+              : 'text-destructive'
+          )}>
+            {revokeResult.message}
+          </p>
+          <button
+            onClick={() => setRevokeResult(null)}
+            className="text-muted-foreground hover:text-foreground shrink-0"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* ── Add / Edit form ─────────────────────────────────────────────────── */}
       {showForm && (
