@@ -118,7 +118,7 @@ export default function DocumentsPage({ initialJobId }: Props) {
   };
 
   const fetchJobs = async () => {
-    const res = await fetch('/api/jobs?limit=500');
+    const res = await fetch('/api/jobs?limit=200');
     if (res.ok) {
       const d = await res.json();
       const unique = new Map<string, Job>();
