@@ -1,11 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bot,
+  Briefcase,
+  Building2,
   Download,
   FileText,
   Loader2,
+  MapPin,
   Paperclip,
+  Search,
   Send,
+  Tag,
   Trash2,
   Upload,
   X,
@@ -20,8 +25,9 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Doc {
   id: string;
@@ -35,12 +41,20 @@ interface Doc {
   uploaded_at: string;
 }
 
-interface Job { id: string; title: string; company: string; }
+interface Job {
+  id: string;
+  title: string;
+  company: string;
+  location: string;
+  category: string;
+  tags: string[];
+}
+
 interface ChatMsg { role: 'user' | 'assistant'; content: string; }
 
-interface Props {
-  initialJobId?: string | null;
-}
+interface Props { initialJobId?: string | null; }
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -66,21 +80,31 @@ function fileIcon(filename: string) {
   return <FileText className={cn('h-4 w-4 shrink-0', color)} />;
 }
 
+// ─── Main component ───────────────────────────────────────────────────────────
+
 export default function DocumentsPage({ initialJobId }: Props) {
-  const [docs, setDocs] = useState<Doc[]>([]);
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [stats, setStats] = useState<{ total: number; total_size: number } | null>(null);
+  const [docs, setDocs]       = useState<Doc[]>([]);
+  const [jobs, setJobs]       = useState<Job[]>([]);
+  const [stats, setStats]     = useState<{ total: number; total_size: number } | null>(null);
   const [loading, setLoading] = useState(true);
-  const [jobFilter, setJobFilter] = useState<string>(initialJobId ?? 'all');
+
+  // Job selector state
+  const [jobFilter, setJobFilter]         = useState<string>(initialJobId ?? 'all');
+  const [jobSearch, setJobSearch]         = useState('');
+  const [activeTag, setActiveTag]         = useState<string>('All');
+
+  // Upload
   const [uploading, setUploading] = useState(false);
   const uploadRef = useRef<HTMLInputElement>(null);
 
   // Interview prep chat
-  const [prepDoc, setPrepDoc] = useState<Doc | null>(null);
+  const [prepDoc, setPrepDoc]   = useState<Doc | null>(null);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [inputMsg, setInputMsg] = useState('');
   const [streaming, setStreaming] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // ── Fetches ──────────────────────────────────────────────────────────────────
 
   const fetchDocs = async () => {
     const params = jobFilter !== 'all' ? `?job_id=${jobFilter}` : '';
@@ -94,38 +118,67 @@ export default function DocumentsPage({ initialJobId }: Props) {
   };
 
   const fetchJobs = async () => {
-    const res = await fetch('/api/jobs?limit=200');
+    const res = await fetch('/api/jobs?limit=500');
     if (res.ok) {
       const d = await res.json();
       const unique = new Map<string, Job>();
-      for (const j of d.jobs) unique.set(j.id, { id: j.id, title: j.title, company: j.company });
+      for (const j of d.jobs) {
+        if (!unique.has(j.id)) {
+          unique.set(j.id, {
+            id: j.id,
+            title: j.title ?? '',
+            company: j.company ?? '',
+            location: j.location ?? '',
+            category: j.category ?? '',
+            tags: Array.isArray(j.tags) ? j.tags : [],
+          });
+        }
+      }
       setJobs(Array.from(unique.values()));
     }
   };
 
   useEffect(() => { fetchJobs(); }, []);
   useEffect(() => { fetchDocs(); }, [jobFilter]);
+  useEffect(() => { if (initialJobId) setJobFilter(initialJobId); }, [initialJobId]);
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
-  // Sync initialJobId when it changes (e.g. navigated from feed)
-  useEffect(() => {
-    if (initialJobId) setJobFilter(initialJobId);
-  }, [initialJobId]);
+  // ── Derived: all tags from all jobs ─────────────────────────────────────────
+  const allTags = useMemo(() => {
+    const set = new Set<string>();
+    for (const j of jobs) for (const t of j.tags) if (t) set.add(t);
+    return ['All', ...Array.from(set).sort()];
+  }, [jobs]);
 
-  // Scroll chat to bottom on new messages
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  // ── Derived: filtered job list ───────────────────────────────────────────────
+  const filteredJobs = useMemo(() => {
+    const q = jobSearch.toLowerCase().trim();
+    return jobs.filter((j) => {
+      const matchesSearch =
+        !q ||
+        j.title.toLowerCase().includes(q) ||
+        j.company.toLowerCase().includes(q) ||
+        j.location.toLowerCase().includes(q) ||
+        j.tags.some((t) => t.toLowerCase().includes(q));
+      const matchesTag =
+        activeTag === 'All' || j.tags.includes(activeTag);
+      return matchesSearch && matchesTag;
+    });
+  }, [jobs, jobSearch, activeTag]);
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>, jobId?: string) => {
+  const selectedJob = jobFilter !== 'all' ? jobs.find((j) => j.id === jobFilter) : null;
+
+  // ── Upload ───────────────────────────────────────────────────────────────────
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const targetJobId = jobId ?? (jobFilter !== 'all' ? jobFilter : null);
-    if (!targetJobId) { alert('Please filter by a specific job before uploading.'); return; }
+    if (jobFilter === 'all') { alert('Select a job first.'); return; }
     setUploading(true);
     const form = new FormData();
     form.append('file', file);
     try {
-      const res = await fetch(`/api/documents/upload/${targetJobId}`, { method: 'POST', body: form });
+      const res = await fetch(`/api/documents/upload/${jobFilter}`, { method: 'POST', body: form });
       if (!res.ok) { const err = await res.json(); alert(err.detail || 'Upload failed.'); }
       else await fetchDocs();
     } finally {
@@ -140,6 +193,8 @@ export default function DocumentsPage({ initialJobId }: Props) {
     if (prepDoc?.id === id) { setPrepDoc(null); setMessages([]); }
     fetchDocs();
   };
+
+  // ── Chat ─────────────────────────────────────────────────────────────────────
 
   const handleStartPrep = (doc: Doc) => {
     setPrepDoc(doc);
@@ -158,31 +213,18 @@ export default function DocumentsPage({ initialJobId }: Props) {
     const newHistory = [...messages, { role: 'user' as const, content: userMsg }];
     setMessages(newHistory);
     setStreaming(true);
-
-    // Build history for API (exclude the initial greeting)
-    const apiHistory = newHistory
-      .slice(1)
-      .slice(0, -1)
-      .map((m) => ({ role: m.role, content: m.content }));
-
+    const apiHistory = newHistory.slice(1).slice(0, -1).map((m) => ({ role: m.role, content: m.content }));
     try {
       const res = await fetch('/api/documents/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          doc_id: prepDoc.id,
-          job_id: prepDoc.job_id,
-          message: userMsg,
-          history: apiHistory,
-        }),
+        body: JSON.stringify({ doc_id: prepDoc.id, job_id: prepDoc.job_id, message: userMsg, history: apiHistory }),
       });
       if (!res.ok) throw new Error('Chat request failed');
-
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
       let assistantText = '';
       setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
-
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -217,14 +259,22 @@ export default function DocumentsPage({ initialJobId }: Props) {
     }
   };
 
-  const filteredJobForUpload = jobFilter !== 'all'
-    ? jobs.find((j) => j.id === jobFilter)
-    : null;
+  // ─── Render ───────────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Stats + controls */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+
+      {/* Hidden file input */}
+      <input
+        ref={uploadRef}
+        type="file"
+        accept=".pdf,.txt,.md,.doc,.docx,.csv"
+        className="hidden"
+        onChange={handleUpload}
+      />
+
+      {/* ── Stats bar ──────────────────────────────────────────────────────── */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-4">
           {stats && (
             <>
@@ -233,53 +283,191 @@ export default function DocumentsPage({ initialJobId }: Props) {
             </>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          {/* Job filter */}
-          <select
-            className="h-8 rounded-md border border-border bg-background px-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-            value={jobFilter}
-            onChange={(e) => setJobFilter(e.target.value)}
-          >
-            <option value="all">All jobs</option>
-            {jobs.map((j) => (
-              <option key={j.id} value={j.id}>
-                {j.title}{j.company ? ` — ${j.company}` : ''}
-              </option>
-            ))}
-          </select>
-          {/* Upload button — only active when a specific job is selected */}
-          <input
-            ref={uploadRef}
-            type="file"
-            accept=".pdf,.txt,.md,.doc,.docx,.csv"
-            className="hidden"
-            onChange={(e) => handleUpload(e)}
-          />
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={jobFilter === 'all' || uploading}
-            onClick={() => uploadRef.current?.click()}
-            title={jobFilter === 'all' ? 'Select a specific job first' : 'Upload document for this job'}
-          >
-            {uploading
-              ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-              : <Upload className="h-3.5 w-3.5 mr-1.5" />}
-            Upload
-          </Button>
-        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={jobFilter === 'all' || uploading}
+          onClick={() => uploadRef.current?.click()}
+          title={jobFilter === 'all' ? 'Select a specific job first' : 'Upload document for this job'}
+        >
+          {uploading
+            ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+            : <Upload className="h-3.5 w-3.5 mr-1.5" />}
+          Upload for selected job
+        </Button>
       </div>
 
-      {jobFilter !== 'all' && filteredJobForUpload && (
-        <div className="rounded-lg bg-primary/5 border border-primary/20 px-4 py-2.5 text-xs text-primary flex items-center gap-2">
-          <Paperclip className="h-3.5 w-3.5 shrink-0" />
-          Showing documents for: <strong>{filteredJobForUpload.title}</strong>
-          {filteredJobForUpload.company && <span className="text-muted-foreground">@ {filteredJobForUpload.company}</span>}
-          <button onClick={() => setJobFilter('all')} className="ml-auto hover:text-foreground"><X className="h-3 w-3" /></button>
-        </div>
-      )}
+      {/* ── STEP 1-4: Job selector panel ──────────────────────────────────── */}
+      <Card className="border-border/60">
+        <CardHeader className="pb-3 pt-4 px-4">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Briefcase className="h-4 w-4 text-primary" />
+            Select a job offering
+          </CardTitle>
+          <CardDescription className="text-xs">
+            Choose which job this document set belongs to. Documents displayed below will filter accordingly.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="px-4 pb-4 space-y-3">
 
-      {/* Document library */}
+          {/* STEP 1 — Search bar */}
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            <Input
+              placeholder="Search jobs by title, company, location or skill…"
+              className="pl-8 pr-8 h-9"
+              value={jobSearch}
+              onChange={(e) => setJobSearch(e.target.value)}
+            />
+            {jobSearch && (
+              <button
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                onClick={() => setJobSearch('')}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* STEP 2 — Tag filter chips */}
+          {allTags.length > 1 && (
+            <div className="flex flex-wrap gap-1.5">
+              {allTags.map((tag) => (
+                <button
+                  key={tag}
+                  onClick={() => setActiveTag(tag)}
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors',
+                    activeTag === tag
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'bg-background border-border text-muted-foreground hover:border-primary/40 hover:text-foreground'
+                  )}
+                >
+                  {tag !== 'All' && <Tag className="h-2.5 w-2.5" />}
+                  {tag}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* STEP 4 — Scrollable filtered job card list */}
+          {/* STEP 3 — reactive filter applied through filteredJobs */}
+          <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
+            {/* "All jobs" entry */}
+            <button
+              onClick={() => setJobFilter('all')}
+              className={cn(
+                'w-full text-left rounded-lg border px-3 py-2.5 transition-colors',
+                jobFilter === 'all'
+                  ? 'border-primary bg-primary/5'
+                  : 'border-border hover:border-primary/30 hover:bg-muted/40'
+              )}
+            >
+              <span className={cn(
+                'text-xs font-medium',
+                jobFilter === 'all' ? 'text-primary' : 'text-muted-foreground'
+              )}>
+                All jobs (show every document)
+              </span>
+            </button>
+
+            {filteredJobs.length === 0 && (
+              <div className="flex flex-col items-center justify-center py-8 gap-2 text-center">
+                <Briefcase className="h-8 w-8 text-muted-foreground/30" />
+                <p className="text-xs text-muted-foreground">
+                  {jobs.length === 0
+                    ? 'No jobs scraped yet. Go to URL Manager and run a scan first.'
+                    : `No jobs match "${jobSearch}"${activeTag !== 'All' ? ` with tag "${activeTag}"` : ''}.`}
+                </p>
+                {(jobSearch || activeTag !== 'All') && (
+                  <Button
+                    size="sm" variant="ghost" className="text-xs h-7"
+                    onClick={() => { setJobSearch(''); setActiveTag('All'); }}
+                  >
+                    Clear filters
+                  </Button>
+                )}
+              </div>
+            )}
+
+            {filteredJobs.map((j) => {
+              const isSelected = jobFilter === j.id;
+              return (
+                <button
+                  key={j.id}
+                  onClick={() => setJobFilter(isSelected ? 'all' : j.id)}
+                  className={cn(
+                    'w-full text-left rounded-lg border px-3 py-2.5 transition-colors',
+                    isSelected
+                      ? 'border-primary bg-primary/5 shadow-sm'
+                      : 'border-border hover:border-primary/30 hover:bg-muted/40'
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className={cn(
+                        'text-xs font-semibold leading-snug truncate',
+                        isSelected ? 'text-primary' : 'text-foreground'
+                      )}>
+                        {j.title}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
+                        {j.company && (
+                          <span className="flex items-center gap-0.5 text-[11px] text-muted-foreground">
+                            <Building2 className="h-2.5 w-2.5" />{j.company}
+                          </span>
+                        )}
+                        {j.location && (
+                          <span className="flex items-center gap-0.5 text-[11px] text-muted-foreground">
+                            <MapPin className="h-2.5 w-2.5" />{j.location}
+                          </span>
+                        )}
+                      </div>
+                      {j.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1.5">
+                          {j.tags.slice(0, 5).map((tag) => (
+                            <span
+                              key={tag}
+                              className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {isSelected && (
+                      <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                        selected
+                      </span>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Selected job active banner */}
+          {selectedJob && (
+            <div className="flex items-center gap-2 rounded-lg bg-primary/5 border border-primary/20 px-3 py-2">
+              <Paperclip className="h-3.5 w-3.5 text-primary shrink-0" />
+              <span className="text-xs text-primary font-medium flex-1 truncate">
+                Filtering: {selectedJob.title}
+                {selectedJob.company ? ` @ ${selectedJob.company}` : ''}
+              </span>
+              <button
+                onClick={() => setJobFilter('all')}
+                className="text-primary/60 hover:text-primary"
+                title="Clear job filter"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── Document library ──────────────────────────────────────────────── */}
       {loading ? (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -291,20 +479,23 @@ export default function DocumentsPage({ initialJobId }: Props) {
             <p className="font-medium text-sm">No documents yet</p>
             <p className="text-xs text-muted-foreground text-center max-w-xs">
               {jobFilter === 'all'
-                ? 'Go to the Job Feed, click the upload icon on any job card, and attach a CV or prep document.'
-                : 'Select a file above to upload your first document for this job.'}
+                ? 'Select a job above, then upload a CV or prep document.'
+                : 'Click "Upload for selected job" to attach your first document.'}
             </p>
+            {jobFilter !== 'all' && (
+              <Button size="sm" variant="outline" onClick={() => uploadRef.current?.click()} disabled={uploading}>
+                <Upload className="h-3.5 w-3.5 mr-1.5" />Upload now
+              </Button>
+            )}
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">{docs.length} document{docs.length !== 1 ? 's' : ''}{selectedJob ? ` for ${selectedJob.title}` : ''}</p>
           {docs.map((doc) => (
             <Card
               key={doc.id}
-              className={cn(
-                'transition-shadow hover:shadow-md',
-                prepDoc?.id === doc.id && 'border-primary/50 shadow-md'
-              )}
+              className={cn('transition-shadow hover:shadow-md', prepDoc?.id === doc.id && 'border-primary/50 shadow-md')}
             >
               <CardContent className="p-4">
                 <div className="flex items-start gap-3">
@@ -353,7 +544,7 @@ export default function DocumentsPage({ initialJobId }: Props) {
         </div>
       )}
 
-      {/* Interview Prep Chat panel */}
+      {/* ── Interview Prep Chat panel ────────────────────────────────────── */}
       {prepDoc && (
         <Card className="border-primary/30 shadow-lg animate-fade-in">
           <CardHeader className="pb-3">
@@ -376,29 +567,20 @@ export default function DocumentsPage({ initialJobId }: Props) {
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
-            {/* Messages */}
             <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
               {messages.map((msg, i) => (
-                <div
-                  key={i}
-                  className={cn(
-                    'flex gap-2.5',
-                    msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'
-                  )}
-                >
+                <div key={i} className={cn('flex gap-2.5', msg.role === 'user' ? 'flex-row-reverse' : 'flex-row')}>
                   {msg.role === 'assistant' && (
                     <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 mt-0.5">
                       <Bot className="h-3.5 w-3.5 text-primary" />
                     </div>
                   )}
-                  <div
-                    className={cn(
-                      'rounded-xl px-3 py-2 text-sm max-w-[85%] leading-relaxed whitespace-pre-wrap',
-                      msg.role === 'user'
-                        ? 'bg-primary text-primary-foreground ml-auto'
-                        : 'bg-muted text-foreground'
-                    )}
-                  >
+                  <div className={cn(
+                    'rounded-xl px-3 py-2 text-sm max-w-[85%] leading-relaxed whitespace-pre-wrap',
+                    msg.role === 'user'
+                      ? 'bg-primary text-primary-foreground ml-auto'
+                      : 'bg-muted text-foreground'
+                  )}>
                     {msg.content || (streaming && i === messages.length - 1
                       ? <span className="flex gap-1 items-center"><Loader2 className="h-3 w-3 animate-spin" /><span className="text-xs text-muted-foreground">Thinking…</span></span>
                       : '')}
@@ -407,8 +589,6 @@ export default function DocumentsPage({ initialJobId }: Props) {
               ))}
               <div ref={chatEndRef} />
             </div>
-
-            {/* Quick prompts */}
             {messages.length <= 1 && (
               <div className="flex flex-wrap gap-1.5">
                 {[
@@ -419,7 +599,7 @@ export default function DocumentsPage({ initialJobId }: Props) {
                 ].map((q) => (
                   <button
                     key={q}
-                    onClick={() => { setInputMsg(q); }}
+                    onClick={() => setInputMsg(q)}
                     className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
                   >
                     {q}
@@ -427,8 +607,6 @@ export default function DocumentsPage({ initialJobId }: Props) {
                 ))}
               </div>
             )}
-
-            {/* Input */}
             <div className="flex gap-2">
               <Input
                 placeholder="Ask anything about this interview…"
@@ -438,15 +616,8 @@ export default function DocumentsPage({ initialJobId }: Props) {
                 disabled={streaming}
                 className="flex-1"
               />
-              <Button
-                size="icon"
-                onClick={handleSend}
-                disabled={!inputMsg.trim() || streaming}
-                title="Send"
-              >
-                {streaming
-                  ? <Loader2 className="h-4 w-4 animate-spin" />
-                  : <Send className="h-4 w-4" />}
+              <Button size="icon" onClick={handleSend} disabled={!inputMsg.trim() || streaming} title="Send">
+                {streaming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               </Button>
             </div>
           </CardContent>
