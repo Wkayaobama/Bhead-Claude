@@ -1,15 +1,16 @@
 import { useState } from 'react';
-import { Activity, Bot, Briefcase, Clock, FileText, Globe, Radar } from 'lucide-react';
+import { Activity, Bot, Briefcase, Clock, FileText, Globe, KeyRound, Radar } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import AgentConfigPage from '@/pages/AgentConfigPage';
 import DocumentsPage from '@/pages/DocumentsPage';
 import JobFeedPage from '@/pages/JobFeedPage';
 import MonitoringPage from '@/pages/MonitoringPage';
+import SecretsPage from '@/pages/SecretsPage';
 import SessionsPage from '@/pages/SessionsPage';
 import TargetsPage from '@/pages/TargetsPage';
 
-type Tab = 'feed' | 'targets' | 'agent' | 'sessions' | 'docs' | 'monitor';
+type Tab = 'feed' | 'targets' | 'agent' | 'sessions' | 'docs' | 'monitor' | 'secrets';
 
 const TABS: { id: Tab; label: string; icon: typeof Briefcase }[] = [
   { id: 'feed',     label: 'Job Feed',     icon: Briefcase  },
@@ -18,6 +19,7 @@ const TABS: { id: Tab; label: string; icon: typeof Briefcase }[] = [
   { id: 'sessions', label: 'Sessions',     icon: Clock      },
   { id: 'docs',     label: 'Documents',    icon: FileText   },
   { id: 'monitor',  label: 'Monitor',      icon: Activity   },
+  { id: 'secrets',  label: 'Secrets',      icon: KeyRound   },
 ];
 
 const HERO: Record<Tab, { title: string; sub: string }> = {
@@ -27,6 +29,7 @@ const HERO: Record<Tab, { title: string; sub: string }> = {
   sessions: { title: 'Agent Session Monitor',      sub: 'Live log of every scrape run — prompts used, results, and errors.' },
   docs:     { title: 'Document Library',           sub: 'Upload interview documents per job and prep with the AI coach.' },
   monitor:  { title: 'Monitoring Dashboard',       sub: 'Performance analytics, hallucination detection, and live audit log.' },
+  secrets:  { title: 'Secrets Vault',              sub: 'Store API keys encrypted at rest — fetch by variable name at runtime.' },
 };
 
 export default function App() {
@@ -91,6 +94,7 @@ export default function App() {
         {tab === 'sessions' && <SessionsPage />}
         {tab === 'docs'     && <DocumentsPage initialJobId={docsJobFilter} />}
         {tab === 'monitor'  && <MonitoringPage />}
+        {tab === 'secrets'  && <SecretsPage />}
       </main>
     </div>
   );

@@ -7,7 +7,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 from app import analytics, error_tracker
 from app.config import settings
-from app.routes import admin, agent_config, documents, jobs, monitor, scraper, sessions, targets
+from app.routes import admin, agent_config, documents, jobs, monitor, scraper, secrets, sessions, targets
 
 
 @asynccontextmanager
@@ -31,6 +31,7 @@ async def lifespan(app: FastAPI):
     await db.agent_sessions.create_index("status")
     await db.documents.create_index("job_id")
     await db.documents.create_index("uploaded_at")
+    await db.secrets.create_index("variable_name", unique=True)
 
     # Start cron scheduler
     from app.scheduler import scheduler_loop
@@ -68,6 +69,7 @@ analytics.install(app)
 
 # Feature routers
 app.include_router(admin.router)
+app.include_router(secrets.router)
 app.include_router(targets.router)
 app.include_router(scraper.router)
 app.include_router(jobs.router)
