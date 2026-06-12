@@ -1,0 +1,5 @@
+.env
+node_modules/
+__pycache__/
+# Workflow registry + run history (file-backed state, not source)
+backend/data/
