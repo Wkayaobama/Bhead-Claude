@@ -26,6 +26,62 @@ docker compose up --build
 
 ---
 
+## Get started
+
+### 60-second path — headless repo workflows (backend only)
+
+```bash
+pip install click
+python scaffold.py new repo-sentry --no-frontend
+cd repo-sentry
+cp .env.example .env        # set ANTHROPIC_API_KEY=sk-ant-...
+docker compose up --build   # backend on :8000, scheduler running
+```
+
+Then, from another terminal, light up your first workflow:
+
+```bash
+# 1. Two example workflows are seeded disabled — grab the /review id
+ID=$(curl -s localhost:8000/api/workflows | \
+     python -c "import sys,json;print(json.load(sys.stdin)[0]['id'])")
+
+# 2. Enable it (daily cadence) and fire it right now
+curl -s -X PATCH localhost:8000/api/workflows/$ID \
+  -H 'Content-Type: application/json' -d '{"enabled": true}'
+curl -s -X POST localhost:8000/api/workflows/$ID/run
+
+# 3. Poll until status flips from "running", then read the review
+curl -s localhost:8000/api/workflows/$ID/runs | python -m json.tool
+```
+
+By default the workflow reviews the scaffolded project itself; point
+`WORKFLOW_TARGET_DIR` in `.env` at any other repo on the host to
+review that instead.
+
+### Full-stack path — chat UI included
+
+Same as above without `--no-frontend`:
+
+```bash
+python scaffold.py new my-app
+cd my-app && cp .env.example .env && docker compose up --build
+# chat UI on http://localhost:5173, API docs on http://localhost:8000/api/docs
+```
+
+The frontend is a deliberate single-file chat page that exists to
+demonstrate the `/api` + SSE seam — keep it as a starting point or
+delete `frontend/` later; the backend never knows the difference.
+
+### Where to look next
+
+- [`template/docs/cheatsheet.md`](template/docs/cheatsheet.md) — one-page
+  reference: every helper, endpoint, env var, and file location.
+- [`template/docs/llm-modes.md`](template/docs/llm-modes.md) — the two
+  LLM loading modes in depth.
+- Both ship inside every scaffolded project under `docs/`.
+
+---
+
 ## Why this shape — the decomposition, in short
 
 ### Frontend / backend decoupling (already clean in the parent)

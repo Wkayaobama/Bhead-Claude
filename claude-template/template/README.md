@@ -34,6 +34,8 @@ scheduler ─▶ app/workflows.py ─▶ app/headless.py ──▶ `claude -p ..
              routes/workflows.py  spawner of `claude`)   agentic, tool access)
 ```
 
+> **Quick reference:** [`docs/cheatsheet.md`](docs/cheatsheet.md) — every
+> helper, endpoint, env var, and file location on one page.
 > **Deep dive:** [`docs/llm-modes.md`](docs/llm-modes.md) documents both
 > LLM loading modes exhaustively — auth resolution, request anatomy,
 > the SSE contract, the CLI permission model, scheduler semantics,
