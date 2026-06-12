@@ -57,8 +57,12 @@ def new(name: str, target_dir: str, no_frontend: bool):
 
     if no_frontend:
         shutil.rmtree(dest / "frontend")
-        compose = dest / "docker-compose.yml"
-        compose.write_text(FRONTEND_BLOCK.sub("", compose.read_text()))
+        # Strip the marker-delimited frontend blocks from infra files
+        # (the compose service; the build stage + COPY in the Cloud Run
+        # Dockerfile).
+        for fname in ("docker-compose.yml", "Dockerfile"):
+            infra = dest / fname
+            infra.write_text(FRONTEND_BLOCK.sub("", infra.read_text()))
 
     for path in dest.rglob("*"):
         if not path.is_file():

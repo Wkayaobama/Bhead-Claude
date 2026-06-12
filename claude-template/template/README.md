@@ -36,6 +36,10 @@ scheduler ─▶ app/workflows.py ─▶ app/headless.py ──▶ `claude -p ..
 
 > **Quick reference:** [`docs/cheatsheet.md`](docs/cheatsheet.md) — every
 > helper, endpoint, env var, and file location on one page.
+> **Cloud deploy:** [`docs/deploy-cloudrun.md`](docs/deploy-cloudrun.md) +
+> `./deploy/cloudrun.sh` — single-container Google Cloud Run deployment
+> (built frontend served by FastAPI, clone-on-demand workflow repo,
+> two scheduling strategies).
 > **Deep dive:** [`docs/llm-modes.md`](docs/llm-modes.md) documents both
 > LLM loading modes exhaustively — auth resolution, request anatomy,
 > the SSE contract, the CLI permission model, scheduler semantics,

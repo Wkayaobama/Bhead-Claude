@@ -104,6 +104,8 @@ that workflow. Never grant bypass flags to unattended runs.
 | `backend/data/workflows.json` | workflow definitions (gitignored) |
 | `backend/data/runs.jsonl` | run history, append-only (gitignored) |
 | `docs/llm-modes.md` | the two loading modes, in depth |
+| `Dockerfile` (root) | production/Cloud Run image (UI built + served by FastAPI) |
+| `deploy/cloudrun.sh` + `docs/deploy-cloudrun.md` | Google Cloud Run deployment |
 
 ## Troubleshoot in one line
 
