@@ -1,0 +1,19 @@
+services:
+  backend:
+    build: ./backend
+    env_file: .env
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./backend:/code
+
+  # --frontend-start (removed by `scaffold.py new --no-frontend`)
+  frontend:
+    build: ./frontend
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    volumes:
+      - ./frontend/src:/code/src
+    depends_on:
+      - backend
+  # --frontend-end
