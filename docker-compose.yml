@@ -13,6 +13,11 @@ services:
       - PREVIEW_DOMAIN_SUFFIX=${PREVIEW_DOMAIN_SUFFIX:-localhost}
     depends_on:
       - backend
+    # Standalone: publish the Vite dev server directly. (Inside Studio,
+    # traffic instead arrived through Traefik on the external `proxy`
+    # network, which doesn't exist outside Studio's hosts.)
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
     # Cap one app's resources so a runaway Vite HMR / build can't starve
     # the EC2 host or the orchestrator. Reservations are the floor the
     # scheduler tries to keep available; limits are the hard ceiling.
@@ -23,11 +28,6 @@ services:
           memory: 768M
         reservations:
           memory: 128M
-    networks:
-      default: {}
-      proxy:
-        aliases:
-          - ${PROJECT_ID:-app}
 
   backend:
     build: ./backend
@@ -75,12 +75,10 @@ services:
       - UT_ENCRYPTION_SECRET=${UT_ENCRYPTION_SECRET:-}
     depends_on:
       - mongo
-    # Backend joins the `proxy` network for Traefik routing of any
-    # backend-exposed routes. The orchestrator Anthropic proxy is
-    # reached via the host bridge above, not by docker DNS.
-    networks:
-      - default
-      - proxy
+    # Standalone: publish the API directly (Studio routed it via Traefik
+    # on the external `proxy` network instead).
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
     deploy:
       resources:
         limits:
@@ -104,8 +102,3 @@ services:
 volumes:
   mongo-data:
   frontend-node-modules:
-
-networks:
-  default:
-  proxy:
-    external: true
