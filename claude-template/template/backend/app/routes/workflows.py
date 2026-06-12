@@ -77,7 +77,9 @@ async def remove_workflow(workflow_id: str):
 
 @router.post("/{workflow_id}/run", status_code=202)
 async def trigger_run(workflow_id: str):
-    workflow = wf.get_workflow(workflow_id)
+    # Accepts the workflow id OR its exact (URL-encoded) name — names
+    # are the stable handle for external schedulers like Cloud Scheduler.
+    workflow = wf.find_workflow(workflow_id)
     if not workflow:
         raise HTTPException(404, "workflow not found")
     run = wf.start_run(workflow)
@@ -88,6 +90,7 @@ async def trigger_run(workflow_id: str):
 
 @router.get("/{workflow_id}/runs")
 async def workflow_runs(workflow_id: str, limit: int = 50):
-    if not wf.get_workflow(workflow_id):
+    workflow = wf.find_workflow(workflow_id)
+    if not workflow:
         raise HTTPException(404, "workflow not found")
-    return wf.list_runs(workflow_id=workflow_id, limit=limit)
+    return wf.list_runs(workflow_id=workflow["id"], limit=limit)

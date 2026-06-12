@@ -87,6 +87,16 @@ def get_workflow(workflow_id: str) -> Optional[dict]:
     return next((w for w in load_workflows() if w["id"] == workflow_id), None)
 
 
+def find_workflow(key: str) -> Optional[dict]:
+    """Look up by id, falling back to exact name. Names give external
+    schedulers (e.g. Cloud Scheduler) a stable address: on ephemeral
+    filesystems the seeded ids change when an instance is replaced,
+    but the names don't."""
+    return get_workflow(key) or next(
+        (w for w in load_workflows() if w["name"] == key), None
+    )
+
+
 def create_workflow(fields: dict) -> dict:
     workflows = load_workflows()
     workflow = _normalize(fields)
