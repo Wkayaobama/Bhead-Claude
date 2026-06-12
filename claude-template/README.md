@@ -80,3 +80,14 @@ helpers from it and nothing else imports the `anthropic` package. Keep
 that invariant and you can swap models, add caching, insert a gateway,
 or meter usage by editing exactly one file — which is precisely the
 property that made the parent app easy to dissect.
+
+### Second rail: headless workflows (added, not substituted)
+
+The template also carries a second, parallel LLM rail with the same
+seam discipline: `backend/app/headless.py` is the only place a
+`claude` subprocess is spawned (Claude Code CLI in print mode —
+`claude -p "/review" --output-format text`), and
+`backend/app/workflows.py` adds a file-backed registry + interval
+scheduler so prompts and cadences vary at runtime via
+`/api/workflows`. See the template README's "Headless workflows"
+section.

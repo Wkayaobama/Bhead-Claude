@@ -6,6 +6,9 @@ services:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - ./backend:/code
+      # Headless workflows run `claude -p ...` inside /repo. Defaults to
+      # this project itself; point WORKFLOW_TARGET_DIR at any other repo.
+      - ${WORKFLOW_TARGET_DIR:-.}:/repo
 
   # --frontend-start (removed by `scaffold.py new --no-frontend`)
   frontend:
