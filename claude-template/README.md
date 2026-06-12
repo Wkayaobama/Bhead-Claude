@@ -91,3 +91,9 @@ seam discipline: `backend/app/headless.py` is the only place a
 scheduler so prompts and cadences vary at runtime via
 `/api/workflows`. See the template README's "Headless workflows"
 section.
+
+Full documentation of both loading modes — in-process SDK vs headless
+CLI: auth, execution models, permission policy, scheduler semantics,
+failure tables, decision guide — lives in
+[`template/docs/llm-modes.md`](template/docs/llm-modes.md) and ships
+with every scaffolded project.

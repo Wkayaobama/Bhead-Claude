@@ -34,6 +34,11 @@ scheduler ─▶ app/workflows.py ─▶ app/headless.py ──▶ `claude -p ..
              routes/workflows.py  spawner of `claude`)   agentic, tool access)
 ```
 
+> **Deep dive:** [`docs/llm-modes.md`](docs/llm-modes.md) documents both
+> LLM loading modes exhaustively — auth resolution, request anatomy,
+> the SSE contract, the CLI permission model, scheduler semantics,
+> failure modes, and when to use which.
+
 Three invariants keep this template easy to grow and easy to gut:
 
 1. **The frontend only speaks HTTP to `/api/*`.** It holds no AI
