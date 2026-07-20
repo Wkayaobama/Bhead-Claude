@@ -30,6 +30,18 @@ ANTHROPIC_API_KEY=sk-ant-... uvicorn app.main:app --reload
 | `WORKFLOW_WORKDIR` | `/repo` | cwd of headless runs (in-container) |
 | `BACKEND_PORT` / `FRONTEND_PORT` | 8000 / 5173 | compose |
 
+## Ad-hoc CLI — no server needed
+
+```bash
+python backend/cli.py chat  "Summarize this repo's purpose"        # seam #1 (SDK, streamed)
+python backend/cli.py agent "List all TypeScript errors in src/"   # seam #2 (agent, cwd)
+python backend/cli.py agent "/review" --workdir ~/code/other-repo
+python backend/cli.py workflow "Code review" --as-json             # run a registered workflow once
+```
+
+Same seams as the server; exit code mirrors the run. Ad-hoc runs are
+not written to the run history.
+
 ## Mode 1 — in-process API (`from app.llm import ...`)
 
 ```python

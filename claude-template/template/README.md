@@ -59,6 +59,18 @@ Three invariants keep this template easy to grow and easy to gut:
    It is the only place a `claude` subprocess is spawned. CLI flags,
    sandboxing, and capability policy live in one file.
 
+## Ad-hoc CLI (no server)
+
+The FastAPI app is just one entry point over the seams. For one-off
+invocations from a terminal, cron, or CI, `backend/cli.py` wraps the
+same modules directly:
+
+```bash
+python backend/cli.py chat  "Summarize RFC 9110 in three bullets"
+python backend/cli.py agent "List all TypeScript errors in src/"
+python backend/cli.py workflow "Code review"
+```
+
 ## Headless workflows
 
 Periodic agentic jobs against a repository — `claude -p "/review"`,
