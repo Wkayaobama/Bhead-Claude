@@ -9,7 +9,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from app.claude_examples import stream_chat
+from app.llm import stream_chat
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
@@ -246,7 +246,6 @@ async def interview_prep_chat(req: ChatRequest, request: Request):
                 user_message=req.message,
                 history=req.history,
                 system_prompt=system_prompt,
-                max_tokens=1500,
             ):
                 yield f"data: {json.dumps({'text': chunk})}\n\n"
             yield 'data: {"done": true}\n\n'

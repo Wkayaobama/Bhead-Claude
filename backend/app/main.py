@@ -1,12 +1,13 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 
-from app import analytics, error_tracker
+from app import llm
 from app.config import settings
+from app.quality import describe as describe_quality
 from app.routes import admin, agent_config, documents, jobs, monitor, scraper, secrets, sessions, targets
 
 
@@ -57,15 +58,16 @@ app = FastAPI(
     redoc_url="/api/redoc",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-error_tracker.install(app)
-analytics.install(app)
+# The browser reaches /api through the Vite dev server (and, in production,
+# the same reverse proxy that serves the bundle), so cross-origin calls only
+# happen when CORS_ORIGINS names them explicitly.
+if settings.cors_origin_list:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origin_list,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 # Feature routers
 app.include_router(admin.router)
@@ -80,5 +82,35 @@ app.include_router(monitor.router)
 
 
 @app.get("/api/health")
-async def health():
-    return {"status": "ok", "project": settings.project_name}
+async def health(request: Request):
+    """Liveness plus the configuration facts an operator checks first."""
+    mongo_client = getattr(request.app.state, "mongo", None)
+    if mongo_client is None:
+        mongo = "not connected"
+    else:
+        try:
+            # Bounded: a down database must answer "unreachable" within a
+            # probe's deadline, not after the driver's 30 s server selection.
+            await asyncio.wait_for(mongo_client.admin.command("ping"), timeout=2)
+            mongo = "ok"
+        except Exception:
+            mongo = "unreachable"
+    quality = describe_quality()
+    return {
+        "status": "ok" if mongo == "ok" else "degraded",
+        "project": settings.project_name,
+        "mongo": mongo,
+        "llm": llm.describe(),
+        "quality": {
+            "threshold": quality["threshold"],
+            "rules": len(quality["rules"]),
+            "bands": [b["key"] for b in quality["bands"]],
+        },
+        "secrets_vault": bool(settings.secrets_encryption_key),
+        "caps": {
+            "scrape_page_chars": settings.scrape_page_chars,
+            "apify_text_chars": settings.apify_text_chars,
+            "extract_max_tokens": settings.extract_max_tokens,
+            "chat_max_tokens": settings.chat_max_tokens,
+        },
+    }

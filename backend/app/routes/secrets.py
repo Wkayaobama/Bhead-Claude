@@ -2,8 +2,13 @@
 Secrets vault — lightweight encrypted key-value store.
 
 Every secret is stored as a Fernet-encrypted blob in the `secrets` collection.
-The encryption key is derived deterministically from the app's UT_API_KEY so
-it survives container restarts without any extra configuration.
+The encryption key is derived deterministically from `SECRETS_ENCRYPTION_KEY`
+so it survives container restarts. While that setting is empty the vault is
+disabled (503) — encrypting with a guessable constant would only look safe.
+
+Blobs written by the generated version of this app were keyed on the host's
+per-app key; setting `SECRETS_ENCRYPTION_KEY` to that old value keeps them
+readable (the derivation salt is unchanged).
 
 Routes
 ------
@@ -19,12 +24,23 @@ from datetime import datetime
 from typing import Optional
 
 from cryptography.fernet import Fernet, InvalidToken
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from app.config import settings
 
-router = APIRouter(prefix="/api/secrets", tags=["secrets"])
+
+def _require_vault() -> None:
+    if not settings.secrets_encryption_key.strip():
+        raise HTTPException(
+            503,
+            detail="Secrets vault disabled: set SECRETS_ENCRYPTION_KEY in .env to enable it.",
+        )
+
+
+router = APIRouter(
+    prefix="/api/secrets", tags=["secrets"], dependencies=[Depends(_require_vault)]
+)
 
 # ---------------------------------------------------------------------------
 # Encryption helpers
@@ -32,11 +48,11 @@ router = APIRouter(prefix="/api/secrets", tags=["secrets"])
 
 def _fernet() -> Fernet:
     """
-    Derive a stable Fernet key from the app's UT_API_KEY.
+    Derive a stable Fernet key from SECRETS_ENCRYPTION_KEY.
     SHA-256 gives us exactly 32 bytes; urlsafe_b64encode makes it Fernet-safe.
     """
     raw = hashlib.sha256(
-        f"hr_scout_vault_v1:{settings.ut_api_key}".encode()
+        f"hr_scout_vault_v1:{settings.secrets_encryption_key.strip()}".encode()
     ).digest()
     return Fernet(base64.urlsafe_b64encode(raw))
 

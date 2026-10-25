@@ -19,7 +19,10 @@ from bson import ObjectId
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel
 
-from app.claude_examples import extract_structured
+from app.categories import CATEGORIES
+from app.config import settings
+from app.llm import extract_structured
+from app.quality import extract_fields
 from app.routes.agent_config import DEFAULT_SYSTEM_PROMPT
 from app.routes.apify_scraper import (
     apify_item_to_text_block,
@@ -29,15 +32,9 @@ from app.routes.apify_scraper import (
 router = APIRouter(prefix="/api/scraper", tags=["scraper"])
 
 # ---------------------------------------------------------------------------
-# Categories
-# ---------------------------------------------------------------------------
-CATEGORIES = [
-    "Engineering", "Marketing", "Sales", "HR", "Finance",
-    "Design", "Operations", "Product", "Legal", "Other",
-]
-
-# ---------------------------------------------------------------------------
-# Claude extraction schema  (shared by both paths)
+# Claude extraction schema  (shared by both paths). Structured output needs
+# every property listed as required; the prompt asks for "" where a value is
+# missing, so nothing is lost by requiring them.
 # ---------------------------------------------------------------------------
 _JOB_EXTRACTION_SCHEMA = {
     "type": "object",
@@ -60,7 +57,7 @@ _JOB_EXTRACTION_SCHEMA = {
                     "posted_at": {"type": "string"},
                     "category": {
                         "type": "string",
-                        "enum": CATEGORIES,
+                        "enum": list(CATEGORIES),
                         "description": "Best-fit department category",
                     },
                     "tags": {
@@ -69,7 +66,10 @@ _JOB_EXTRACTION_SCHEMA = {
                         "description": "Key skills or technologies (max 5)",
                     },
                 },
-                "required": ["title", "category"],
+                "required": [
+                    "title", "company", "location", "description", "url",
+                    "salary_range", "posted_at", "category", "tags",
+                ],
             },
         }
     },
@@ -139,8 +139,8 @@ async def _persist_jobs(
     new_count = 0
 
     for job in jobs:
-        title = job.get("title", "").strip()
-        company = job.get("company", "").strip()
+        fields = extract_fields(job)
+        title, company = fields["title"], fields["company"]
         if not title:
             continue
         exists = await db.job_postings.find_one(
@@ -232,6 +232,7 @@ async def _do_scrape(db, target_id: str, triggered_by: str = "manual") -> None:
         "error": None,
         "triggered_by": triggered_by,
         "scrape_mode": "html",
+        "model": settings.ai_model,
     }
     session_res = await db.agent_sessions.insert_one(session_doc)
     session_id = session_res.inserted_id
@@ -254,7 +255,7 @@ async def _do_scrape(db, target_id: str, triggered_by: str = "manual") -> None:
             resp.raise_for_status()
             raw_html = resp.text
 
-        page_text = _html_to_text(raw_html)[:12_000]
+        page_text = _html_to_text(raw_html)[: settings.scrape_page_chars]
 
         result = await extract_structured(
             user_message=(
@@ -267,10 +268,7 @@ async def _do_scrape(db, target_id: str, triggered_by: str = "manual") -> None:
                 f"PAGE TEXT:\n{page_text}"
             ),
             schema=_JOB_EXTRACTION_SCHEMA,
-            schema_name="job_listings",
-            schema_description="Structured job postings from a job board",
             system_prompt=system_prompt,
-            max_tokens=4096,
         )
 
         await _persist_jobs(
@@ -315,6 +313,7 @@ async def _do_scrape_apify(
         "error": None,
         "triggered_by": triggered_by,
         "scrape_mode": "apify",
+        "model": settings.ai_model,
     }
     session_res = await db.agent_sessions.insert_one(session_doc)
     session_id = session_res.inserted_id
@@ -332,7 +331,7 @@ async def _do_scrape_apify(
         page_text = "\n\n".join(
             apify_item_to_text_block(i, item)
             for i, item in enumerate(raw_items)
-        )[:15_000]
+        )[: settings.apify_text_chars]
 
         source_label = (
             f"Apify jobup.ch actor — {len(raw_items)} leaf-page items from: {url}"
@@ -350,10 +349,7 @@ async def _do_scrape_apify(
                 f"DATA:\n{page_text}"
             ),
             schema=_JOB_EXTRACTION_SCHEMA,
-            schema_name="job_listings",
-            schema_description="Structured job postings extracted via Apify",
             system_prompt=system_prompt,
-            max_tokens=4096,
         )
 
         await _persist_jobs(
@@ -369,7 +365,7 @@ async def _do_scrape_apify(
 # ---------------------------------------------------------------------------
 
 class ApifyRunRequest(BaseModel):
-    apify_token: str
+    apify_token: str = ""          # falls back to APIFY_API_KEY when empty
     max_items: int | None = None   # optional cap; None = actor default
 
 
@@ -406,15 +402,19 @@ async def trigger_apify_scrape(
     """
     Trigger the Apify jobup.ch leaf-page scraper for a target.
 
-    Requires `{"apify_token": "<your Apify API token>"}` in the request body.
+    Takes `{"apify_token": "<your Apify API token>"}` in the request body, or
+    uses the server-side `APIFY_API_KEY` when the body leaves it empty.
     """
     db = request.app.state.db
     try:
         oid = ObjectId(target_id)
     except Exception:
         raise HTTPException(400, detail="Invalid target ID.")
-    if not body.apify_token.strip():
-        raise HTTPException(400, detail="apify_token must not be empty.")
+    apify_token = body.apify_token.strip() or settings.apify_api_key.strip()
+    if not apify_token:
+        raise HTTPException(
+            400, detail="Provide apify_token in the request or set APIFY_API_KEY."
+        )
 
     target = await db.scrape_targets.find_one({"_id": oid})
     if not target:
@@ -426,8 +426,7 @@ async def trigger_apify_scrape(
         {"_id": oid}, {"$set": {"status": "running", "last_error": None}}
     )
     background_tasks.add_task(
-        _do_scrape_apify, db, target_id, body.apify_token.strip(), "manual",
-        body.max_items,
+        _do_scrape_apify, db, target_id, apify_token, "manual", body.max_items,
     )
     return {"message": "Apify scrape started", "target_id": target_id}
 

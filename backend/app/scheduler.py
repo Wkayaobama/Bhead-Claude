@@ -1,16 +1,16 @@
 """Background asyncio cron scheduler.
 
-Runs inside the FastAPI lifespan. Every TICK_SECONDS it queries for
-active targets with cron enabled whose next-run time has passed, then
+Runs inside the FastAPI lifespan. Every `SCHEDULER_TICK_SECONDS` it queries
+for active targets with cron enabled whose next-run time has passed, then
 fires a scrape task for each one.
 """
 import asyncio
 import logging
 from datetime import datetime, timedelta
 
-logger = logging.getLogger(__name__)
+from app.config import settings
 
-TICK_SECONDS = 60  # wake up every minute to check due targets
+logger = logging.getLogger(__name__)
 
 
 async def scheduler_loop(db) -> None:
@@ -18,7 +18,8 @@ async def scheduler_loop(db) -> None:
     # Import here to avoid a circular import at module load time
     from app.routes.scraper import _do_scrape
 
-    logger.info("Cron scheduler started (tick=%ss)", TICK_SECONDS)
+    tick = settings.scheduler_tick_seconds
+    logger.info("Cron scheduler started (tick=%ss)", tick)
 
     while True:
         try:
@@ -66,7 +67,7 @@ async def scheduler_loop(db) -> None:
             logger.error("Scheduler tick error: %s", exc)
 
         try:
-            await asyncio.sleep(TICK_SECONDS)
+            await asyncio.sleep(tick)
         except asyncio.CancelledError:
             logger.info("Cron scheduler stopped")
             break
