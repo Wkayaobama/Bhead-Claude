@@ -1,23 +1,13 @@
 """Routes for browsing and managing scraped job postings."""
+import re
 from typing import Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Query, Request
 
-router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+from app.categories import CATEGORIES
 
-CATEGORIES = [
-    "Engineering",
-    "Marketing",
-    "Sales",
-    "HR",
-    "Finance",
-    "Design",
-    "Operations",
-    "Product",
-    "Legal",
-    "Other",
-]
+router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 
 def _serialize(doc: dict) -> dict:
@@ -43,10 +33,12 @@ async def list_jobs(
     if target_id:
         query["target_id"] = target_id
     if search:
+        # Literal match: a query like "C++" must not reach Mongo as a regex.
+        pattern = re.escape(search)
         query["$or"] = [
-            {"title": {"$regex": search, "$options": "i"}},
-            {"company": {"$regex": search, "$options": "i"}},
-            {"location": {"$regex": search, "$options": "i"}},
+            {"title": {"$regex": pattern, "$options": "i"}},
+            {"company": {"$regex": pattern, "$options": "i"}},
+            {"location": {"$regex": pattern, "$options": "i"}},
         ]
 
     total = await db.job_postings.count_documents(query)
@@ -81,7 +73,7 @@ async def get_stats(request: Request):
         "total_targets": total_targets,
         "active_targets": active_targets,
         "categories": categories,
-        "available_categories": CATEGORIES,
+        "available_categories": list(CATEGORIES),
     }
 
 

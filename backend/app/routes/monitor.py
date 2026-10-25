@@ -1,96 +1,26 @@
-"""Monitoring, performance analytics, hallucination detection, and audit log.
+"""Monitoring, performance analytics, quality detection, and audit log.
 
 Provides:
-  GET  /api/monitor/overview       — KPI summary cards
-  GET  /api/monitor/timeline       — jobs scraped per day (last 7 days)
-  GET  /api/monitor/target-perf    — per-target performance metrics
-  GET  /api/monitor/categories     — category distribution
-  GET  /api/monitor/hallucinations — jobs flagged by quality analysis
-  POST /api/monitor/analyze        — run/re-run quality checks on all jobs
-  GET  /api/monitor/audit          — unified event log (sessions + errors + flags)
+  GET  /api/monitor/overview        — KPI summary cards
+  GET  /api/monitor/timeline        — jobs scraped per day (last 7 days)
+  GET  /api/monitor/target-perf     — per-target performance metrics
+  GET  /api/monitor/categories      — category distribution
+  GET  /api/monitor/quality-config  — rules, bands and threshold the UI renders
+  GET  /api/monitor/hallucinations  — jobs flagged by quality analysis
+  POST /api/monitor/analyze         — run/re-run quality checks on all jobs
+  GET  /api/monitor/audit           — unified event log (sessions + errors + flags)
+
+The quality rules themselves live in `app.quality` (registry + pure engine);
+this module only persists results and shapes payloads.
 """
-import re
 from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Query, Request
 
+from app.quality import FLAG_THRESHOLD, describe, evaluate
+
 router = APIRouter(prefix="/api/monitor", tags=["monitor"])
-
-
-# ---------------------------------------------------------------------------
-# Quality / hallucination heuristics
-# ---------------------------------------------------------------------------
-
-_HTML_RE = re.compile(r"<[a-zA-Z][^>]*>|&[a-zA-Z]{2,6};", re.IGNORECASE)
-_TEMPLATE_RE = re.compile(r"\{\{.*?\}\}|\[\[.*?\]\]|<%.*?%>", re.DOTALL)
-_URL_RE = re.compile(r"https?://\S+")
-_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
-
-
-def _analyze_quality(job: dict) -> tuple[int, list[str]]:
-    """Return (confidence_score 0–100, list_of_issue_strings).
-
-    Rules are deterministic — no AI calls — so this runs cheap at scale.
-    """
-    score = 100
-    issues: list[str] = []
-
-    title = (job.get("title") or "").strip()
-    desc = (job.get("description") or "").strip()
-    company = (job.get("company") or "").strip()
-
-    # ── Title checks ────────────────────────────────────────────────────────
-    if len(title) < 3:
-        issues.append("Title missing or too short")
-        score -= 40
-    elif len(title) > 200:
-        issues.append("Title suspiciously long (>200 chars)")
-        score -= 15
-
-    if _URL_RE.search(title):
-        issues.append("URL found inside job title")
-        score -= 20
-
-    # Repeated-word ratio in title
-    words = title.lower().split()
-    if len(words) > 4 and len(set(words)) / len(words) < 0.65:
-        issues.append("Title contains heavily repeated words")
-        score -= 10
-
-    # ── HTML/template artifacts ──────────────────────────────────────────────
-    for field_name, field_val in [("title", title), ("description", desc), ("company", company)]:
-        if _HTML_RE.search(field_val):
-            issues.append(f"HTML artefacts in {field_name}")
-            score -= 20
-            break
-
-    for field_val in [title, desc]:
-        if _TEMPLATE_RE.search(field_val):
-            issues.append("Template/placeholder tokens detected")
-            score -= 30
-            break
-
-    if _CONTROL_RE.search(title + desc):
-        issues.append("Control/binary characters detected")
-        score -= 25
-
-    # ── Field-presence checks ────────────────────────────────────────────────
-    if not company:
-        issues.append("Company name absent")
-        score -= 10
-
-    if desc and len(desc) < 15:
-        issues.append("Description too brief (<15 chars)")
-        score -= 10
-
-    # ── Salary sanity ────────────────────────────────────────────────────────
-    salary = (job.get("salary_range") or "").strip()
-    if salary and not re.search(r"\d", salary):
-        issues.append("Salary range contains no numbers")
-        score -= 5
-
-    return max(0, score), issues
 
 
 # ---------------------------------------------------------------------------
@@ -259,17 +189,26 @@ async def get_target_perf(request: Request):
 
 
 # ---------------------------------------------------------------------------
-# Hallucination detection (step 13)
+# Quality detection (step 13)
 # ---------------------------------------------------------------------------
+
+@router.get("/quality-config")
+async def get_quality_config():
+    """The registry as data: threshold, bands and rules, for UI copy."""
+    return describe()
+
 
 @router.get("/hallucinations")
 async def get_hallucinations(
     request: Request,
-    max_score: int = Query(69, ge=0, le=100),
+    max_score: Optional[int] = Query(None, ge=0, le=100),
     limit: int = Query(50, ge=1, le=200),
 ):
-    """Return jobs whose stored confidence_score is below max_score (default 69)."""
+    """Return jobs whose stored confidence_score is at most `max_score`
+    (default: just below the flag threshold) or that are already flagged."""
     db = request.app.state.db
+    if max_score is None:
+        max_score = FLAG_THRESHOLD - 1
     query = {"flagged": True}
     if max_score < 100:
         query = {
@@ -299,27 +238,32 @@ async def run_analysis(request: Request):
     total = 0
     flagged = 0
     async for job in db.job_postings.find({}):
-        score, issues = _analyze_quality(job)
-        is_flagged = score < 70
+        result = evaluate(job)
         await db.job_postings.update_one(
             {"_id": job["_id"]},
             {
                 "$set": {
-                    "confidence_score": score,
-                    "quality_flags": issues,
-                    "flagged": is_flagged,
+                    "confidence_score": result.score,
+                    "quality_flags": list(result.issues),
+                    "quality_rules_fired": list(result.fired),
+                    "quality_band": result.band,
+                    "flagged": result.flagged,
                     "analyzed_at": datetime.utcnow(),
                 }
             },
         )
         total += 1
-        if is_flagged:
+        if result.flagged:
             flagged += 1
+    config = describe()
     return {
         "analyzed": total,
         "flagged": flagged,
         "clean": total - flagged,
         "flag_rate": round(flagged / total * 100, 1) if total else 0,
+        "threshold": config["threshold"],
+        "bands": config["bands"],
+        "rules_applied": len(config["rules"]),
     }
 
 
