@@ -1,240 +1,166 @@
-# Your App
+# HR Scout
 
-> Generated with **Understand Studio** — an AI app builder by [Understand Tech](https://understand.tech).
+A standalone job-intelligence app: it scrapes job boards you configure,
+extracts structured postings with Claude, scores each extraction with
+deterministic quality rules, and runs an interview-prep coach over the
+documents you upload per job.
 
-A full-stack web app: **React + Vite** (frontend), **FastAPI** (backend), **MongoDB** (database). AI features are wired through Understand Tech's API or directly through Anthropic, depending on how you run it.
+**Stack:** React 18 + Vite + Tailwind (frontend) · FastAPI + Motor (backend) ·
+MongoDB 7 · the Anthropic API, called directly with your own key.
 
-This README explains how to run the app locally, what's in the repo, and how to switch between the two AI modes after download.
+This repository started as a generated app tied to its builder's runtime. It
+has been translated into a self-contained app: one AI seam, one configuration
+class with guardrails, rules kept as data, tests, and system maps. The
+"Migrating from the generated version" section lists what changed.
 
 ---
 
 ## Quick start
 
-### Prerequisites
-
-You need **Docker** with the Compose plugin. The easiest path on each OS:
-
-| OS | What to install |
-|---|---|
-| **macOS** | [Docker Desktop for Mac](https://docs.docker.com/desktop/install/mac-install/) |
-| **Windows** | [Docker Desktop for Windows](https://docs.docker.com/desktop/install/windows-install/) (WSL2 backend recommended) |
-| **Linux** | [Docker Engine](https://docs.docker.com/engine/install/) + the [Compose plugin](https://docs.docker.com/compose/install/linux/) |
-
-Verify with `docker --version` and `docker compose version` — both should print versions, no errors.
-
-### Run the app
-
-#### macOS / Linux
+Prerequisites: Docker with the Compose plugin (`docker compose version`), and an
+Anthropic API key from <https://platform.claude.com>.
 
 ```bash
-# 1. Make sure Docker is running (Docker Desktop, or `sudo systemctl start docker` on Linux).
-# 2. From the repo root:
+cp .env.example .env            # then set ANTHROPIC_API_KEY
 docker compose up --build
 ```
 
-#### Windows (PowerShell or Command Prompt)
+- Frontend: <http://localhost:5173> (`FRONTEND_PORT`)
+- API: <http://localhost:8000> — docs at `/api/docs`, health at `/api/health`
+  (`BACKEND_PORT`)
 
-```powershell
-# 1. Start Docker Desktop.
-# 2. From the repo root:
-docker compose up --build
+Both containers hot-reload on file changes. `docker compose down` stops them;
+`docker compose down -v` also deletes the MongoDB volume (all data).
+
+`/api/health` tells you whether the pieces are wired before you spend a scrape:
+
+```json
+{
+  "status": "ok",
+  "mongo": "ok",
+  "llm": {"provider": "anthropic", "model": "claude-opus-5-5", "effort": "medium",
+          "refusal_fallback": true, "configured": true},
+  "quality": {"threshold": 70, "rules": 10},
+  "secrets_vault": false,
+  "caps": {"scrape_page_chars": 12000, "apify_text_chars": 15000,
+           "extract_max_tokens": 16000, "chat_max_tokens": 4096}
+}
 ```
 
-> If `.env` is missing on first run, copy it from `.env.example` (if present) and fill in the values described in **Environment** below.
-
-The app starts on:
-
-- **Frontend:** [http://localhost:5173](http://localhost:5173) (configurable via `FRONTEND_PORT`)
-- **Backend:** [http://localhost:8000](http://localhost:8000) (configurable via `BACKEND_PORT`)
-
-The frontend hot-reloads on file changes. The backend reloads on Python file changes.
-
-### Stopping the app
+### Running the backend without Docker
 
 ```bash
-docker compose down
+cd backend
+python -m venv .venv && . .venv/bin/activate
+pip install -r requirements-dev.txt
+uvicorn app.main:app --reload          # reads ../.env automatically
+pytest                                 # 47 tests, no network, no Mongo
 ```
 
-To also delete the MongoDB volume (loses all stored data — **be careful**):
-
-```bash
-docker compose down -v
-```
+The frontend: `cd frontend && npm ci && npm run dev` (the dev server proxies
+`/api` to `http://backend:8000`; change `vite.config.ts` to `localhost:8000`
+when the API runs outside Docker). `npm run build` type-checks and bundles.
 
 ---
 
-## Environment
+## Configuration
 
-Configuration lives in `.env` at the repo root.
+All settings live in [`backend/app/config.py`](backend/app/config.py) as one
+`Settings` class with typed defaults. Values come from the environment, then
+from the first `.env` found at `backend/.env` or the repo root. Unknown keys in
+a shared `.env` are ignored. `docker-compose.yml` passes an **explicit
+allowlist** of variables into the backend container — a new setting needs a
+field in `Settings`, a line in that allowlist, and a row in `.env.example`.
 
-> ⚠️ **Heads up if you just downloaded this app:** the `.env` was seeded for use *inside Studio*. To run it on your own machine you'll need to edit one or two variables — see ["Running the downloaded app"](#running-the-downloaded-app) below. Otherwise Claude features will fail with `Connection refused` on the first AI call.
-
-### What's in `.env`
-
-Studio seeded these variables at project creation:
-
-| Variable | Purpose | Needed after download? |
+| Variable | Default | Purpose |
 |---|---|---|
-| `UT_API_KEY` | Per-app Understand Tech v3 API key. Auths UT assistants, "Understand AI" secure LLM, and catalog models (GPT-4.1, Claude Sonnet 4.6, Mistral Medium, Gemini 3 Flash, DeepSeek V3, xAI Grok 4.1 Fast). | Keep if you want UT features |
-| `UNDERSTAND_API_URL` | UT v3 endpoint. Defaults to `https://developer.understand.tech`. | Keep if you keep `UT_API_KEY` |
-| `UT_LLM_BASE_URL` | Studio's local proxy for Claude calls (`http://host.docker.internal:8001/...`). Only resolves while Studio is running on the same host. | **Remove** — see below |
-| `UT_ENCRYPTION_SECRET` | Air-gap projects only. | Keep if present |
-
-### While iterating inside Studio
-
-You don't need to do anything. The seeded `.env` works as-is. Claude calls route through Studio's proxy; UT v3 calls go directly to UT.
-
-### Running the downloaded app
-
-`UT_LLM_BASE_URL=http://host.docker.internal:8001/...` points at Studio's orchestrator. **That orchestrator is not in your downloaded ZIP.** On any other machine, the URL has nothing on the other end and the Anthropic SDK will fail to connect.
-
-The fix is always the same: **remove `UT_LLM_BASE_URL` from `.env`.** That's the one critical step. The code auto-detects standalone mode the moment that variable is empty.
-
-Then pick the scenario that matches what you want to do:
-
-#### Option A — UT customer running their own copy (most common)
-
-You keep your UT account, you also bring your own Anthropic key:
-
-```bash
-# .env
-UT_API_KEY=<your existing UT v3 API key>
-UNDERSTAND_API_URL=https://developer.understand.tech
-ANTHROPIC_API_KEY=sk-ant-...
-
-# Remove or comment out:
-# UT_LLM_BASE_URL=...
-```
-
-Result: Claude features hit `api.anthropic.com` with your Anthropic key. UT features (assistants, "Understand AI", catalog models) hit UT directly with your UT key.
-
-#### Option B — Pure Anthropic (no UT)
-
-You're not a UT customer, you just want the scaffold:
-
-```bash
-# .env
-ANTHROPIC_API_KEY=sk-ant-...
-
-# Remove or comment out:
-# UT_API_KEY=...
-# UT_LLM_BASE_URL=...
-# UNDERSTAND_API_URL=...
-```
-
-Result: Claude features work. UT features error out (no UT key) — that's fine if your app doesn't use them.
-
-#### Option C — UT-only (no direct Anthropic)
-
-You have a UT account and you only use UT features:
-
-```bash
-# .env
-UT_API_KEY=<your existing UT v3 API key>
-UNDERSTAND_API_URL=https://developer.understand.tech
-
-# Remove or comment out:
-# UT_LLM_BASE_URL=...
-# (no ANTHROPIC_API_KEY needed)
-```
-
-Result: UT features work. Any call to `claude_examples.*` errors with `No AI credentials configured` — by design. If your app doesn't import from `claude_examples`, you'll never see that error.
-
-> **Mode selection is automatic.** The code picks standalone whenever `ANTHROPIC_API_KEY` is set AND `UT_LLM_BASE_URL` is empty/unset; otherwise it tries Studio mode. No flag to flip.
+| `ANTHROPIC_API_KEY` | — | Required for scraping and the coach. Missing → the backend starts, `health.llm.configured` is `false`, and the first AI call fails with a clear message. |
+| `AI_MODEL` | `claude-opus-5-5` | Model for extraction and chat. `claude-sonnet-5-5` is the lower-cost option for high-volume scraping. |
+| `AI_EFFORT` | `medium` | Reasoning depth on Claude 4.6+ models (`low`…`max`). Empty omits the parameter. |
+| `AI_REFUSAL_FALLBACK` | `true` | When the model declines a request, the API re-runs it on Anthropic's recommended fallback model in the same call (beta header `server-side-fallback-2026-07-01`). `false` surfaces refusals as errors. |
+| `EXTRACT_MAX_TOKENS` / `CHAT_MAX_TOKENS` | `16000` / `4096` | Output ceilings. Hitting one is reported as an error, never persisted as a partial result. |
+| `SCRAPE_PAGE_CHARS` / `APIFY_TEXT_CHARS` | `12000` / `15000` | Characters of page text sent to the model per scrape. |
+| `APIFY_API_KEY` | — | Optional server-side Apify token; a token typed into the UI wins. |
+| `SECRETS_ENCRYPTION_KEY` | — | Passphrase for the Secrets tab's encryption key. Empty disables the vault (503) instead of encrypting with a guessable constant. |
+| `CORS_ORIGINS` | — | Comma-separated browser origins allowed cross-origin. Empty installs no CORS middleware: the Vite dev server (and any production proxy) forwards `/api` same-origin. |
+| `MONGO_DB`, `PROJECT_NAME`, `SCHEDULER_TICK_SECONDS` | `app`, `HR Scout`, `60` | Database name, display name, cron tick. |
 
 ---
 
-## Project structure
+## How it fits together
+
+[`docs/SYSTEM_MAPS.md`](docs/SYSTEM_MAPS.md) holds three Mermaid maps — the
+mental model, the logical flow and the schema — plus a list of known drift.
+The short version:
+
+- **One AI seam.** [`backend/app/llm.py`](backend/app/llm.py) is the only
+  module that imports the Anthropic SDK. It exposes `extract_structured`
+  (JSON guaranteed by `output_config.format`), `stream_chat` (for the coach's
+  SSE) and `chat_once`. It turns `stop_reason == "refusal"` and
+  `"max_tokens"` into exceptions so callers never store a declined or truncated
+  answer as a result.
+- **Rules as data, pure engine.** [`backend/app/quality/`](backend/app/quality)
+  scores extractions: `extractor.py` normalises the four scored fields,
+  `registry.py` lists rules, bands and the flag threshold as plain
+  dataclasses, `engine.py` interprets them with no I/O. The registry is
+  validated at import and served at `GET /api/monitor/quality-config`, which
+  the Monitor page renders — the UI never restates a threshold.
+- **Two scrape paths, one extractor call.** Direct HTML fetch or the Apify
+  jobup actor both end in `extract_structured` with the same schema; the
+  scheduler fires the HTML path for cron-enabled targets. Sessions record the
+  model used for each run.
+- **Shared vocabulary.** [`backend/app/categories.py`](backend/app/categories.py)
+  is the single category list used by the extraction schema and the feed.
+
+### Project structure
 
 ```
-.
-├── backend/
-│   ├── app/
-│   │   ├── __init__.py
-│   │   ├── main.py             # FastAPI entrypoint — routes + lifespan-managed Mongo
-│   │   ├── config.py           # Settings (pydantic-settings reads .env)
-│   │   ├── claude_examples.py  # AI cookbook: chat, stream, vision, tools (Anthropic SDK)
-│   │   ├── ut_ai_examples.py   # AI cookbook for the "Understand AI" secure LLM
-│   │   ├── ut_api_v3.py        # UT API v3 client: assistants, workflows, catalog models
-│   │   ├── ut_usage.py         # Usage reporting helpers (Claude calls only)
-│   │   ├── error_tracker.py    # In-memory error ring buffer + middleware
-│   │   └── analytics.py        # Telemetry
-│   ├── Dockerfile
-│   └── requirements.txt        # fastapi, uvicorn, motor, pydantic-settings, anthropic, httpx
-├── frontend/
-│   ├── src/
-│   │   ├── main.tsx            # React entrypoint
-│   │   ├── App.tsx             # Root component — your UI starts here
-│   │   ├── index.css           # Tailwind directives + HSL design tokens (light + dark)
-│   │   ├── components/ui/      # Pre-vendored shadcn primitives (button, card, input, ...)
-│   │   └── lib/utils.ts        # cn() helper (clsx + tailwind-merge)
-│   ├── package.json            # React 18 + TypeScript + Vite + Tailwind + Lucide
-│   ├── tailwind.config.ts
-│   ├── vite.config.ts          # Proxies /api/* → http://backend:8000
-│   └── Dockerfile
-├── docker-compose.yml          # backend + frontend + mongo, joined on the project network
-├── .env                        # Configuration (see Environment)
-├── LICENSE                     # You pick — see below
-└── README.md                   # This file
+backend/
+  app/
+    main.py          FastAPI app, lifespan (Mongo, indexes, scheduler), /api/health
+    config.py        Settings — every tunable, with defaults
+    llm.py           the Anthropic seam
+    categories.py    job categories
+    quality/         extractor · registry · engine
+    scheduler.py     asyncio cron loop
+    routes/          targets, scraper, apify_scraper, jobs, sessions, documents,
+                     monitor, agent_config, secrets, admin
+  tests/             engine parity, seam behaviour, route checks (fake Mongo)
+  requirements.txt   pinned; requirements-dev.txt adds pytest
+frontend/
+  src/pages/         JobFeed, Targets, AgentConfig, Sessions, Documents, Monitoring, Secrets
+  src/components/ui  vendored shadcn-style primitives
+  vite.config.ts     dev server + /api proxy
+docker-compose.yml   frontend + backend + mongo
+docs/SYSTEM_MAPS.md  the three maps and known drift
 ```
 
 ---
 
-## Tech stack
+## Migrating from the generated version
 
-- **Frontend** — React 18, TypeScript, Vite, Tailwind CSS, shadcn-style UI primitives, Lucide icons, Inter Variable font
-- **Backend** — FastAPI, Pydantic v2, Motor (async MongoDB driver), httpx, Anthropic SDK
-- **Database** — MongoDB 7
-- **AI** — Anthropic Claude (in either AI mode) plus the Understand Tech API v3 surface (Mode 1 only) for UT assistants, "Understand AI" secure LLM, and the UT model catalog
+If you ran the previous, builder-hosted version of this app:
 
----
-
-## Customizing
-
-Edit any file freely. The frontend hot-reloads; the backend auto-reloads on Python file changes. Backend dependency changes (new entries in `requirements.txt`) require:
-
-```bash
-docker compose up --build backend
-```
-
-Frontend dependency changes (new entries in `package.json`):
-
-```bash
-docker compose up --build frontend
-```
-
-For AI features, **read the cookbook files first**:
-
-- [`backend/app/claude_examples.py`](backend/app/claude_examples.py) — working snippets for chat, streaming, vision, and tool use through the Anthropic SDK.
-- [`backend/app/ut_api_v3.py`](backend/app/ut_api_v3.py) — UT API v3 client (assistants, catalog models).
-- [`backend/app/ut_ai_examples.py`](backend/app/ut_ai_examples.py) — chat helpers for the "Understand AI" secure LLM.
-
----
-
-## Generated by Understand Studio
-
-This app was scaffolded by **[Understand Studio](https://understand.tech)** — an AI app builder by **[Understand Tech](https://understand.tech)**.
-
-Once you've downloaded this code, **you own it completely**. Understand Tech retains no rights to your generated output, your data, or your customers'.
-
-If you keep building inside Studio you also get:
-
-- AI-driven iteration ("add an admin page", "wire chat to this assistant", …)
-- Live preview at a sharable URL
-- GitHub auto-sync
-- Release locking (signed tarball + SBOM + vuln scan)
+- **AI calls** now go straight to `api.anthropic.com` with `ANTHROPIC_API_KEY`.
+  The proxy URL, per-app key, usage-metering callbacks and the whitelabel
+  identity instruction are gone. The default model moved to `claude-opus-5-5`;
+  set `AI_MODEL` to keep another.
+- **Secrets vault:** the encryption key used to be derived from the host's
+  per-app key. Set `SECRETS_ENCRYPTION_KEY` to that old value to keep existing
+  secrets readable; otherwise re-enter them.
+- **Removed:** the host badge, logo and favicon; the browser error reporter
+  (which forwarded every failed `fetch` to the backend); the request analytics
+  middleware and error ring buffer with their `/api/__*` endpoints; the CORS
+  wildcard; the bundled `claude-template/` scaffold.
+- **Fixed on the way:** the production build (`npm run build`) now passes;
+  job search escapes regex characters (searching `C++` no longer errors);
+  `APIFY_API_KEY` is actually used as the server-side token.
+- **Data:** no migration needed; `MONGO_DB` still defaults to `app`.
 
 ---
 
 ## License
 
-This repo ships with a **placeholder `LICENSE` file**. Pick the license that fits how you want others to use your code, then replace `LICENSE` with the chosen license's full text.
-
-Common choices:
-
-- **[MIT](https://opensource.org/licenses/MIT)** — most permissive; anyone can use, modify, distribute (with attribution). Simple, common for app code.
-- **[Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)** — permissive like MIT plus an explicit patent grant. Enterprise-friendly.
-- **[GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.en.html)** — copyleft; derivatives must also be open-source under GPL.
-- **Proprietary** — write your own terms; the code stays yours.
-
-Not sure? [choosealicense.com](https://choosealicense.com/) walks you through it in 90 seconds.
+`LICENSE` is still a placeholder. Pick the license that fits how you want
+others to use your code and replace the file's contents with its full text —
+<https://choosealicense.com> walks through the common options.
