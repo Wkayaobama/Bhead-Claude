@@ -59,7 +59,25 @@ interface AuditEvent {
   id: string; timestamp: string; type: string; severity: 'info' | 'warning' | 'error';
   target: string; message: string; details: Record<string, unknown>;
 }
-interface AnalysisResult { analyzed: number; flagged: number; clean: number; flag_rate: number; }
+interface AnalysisResult {
+  analyzed: number; flagged: number; clean: number; flag_rate: number;
+  threshold: number; rules_applied: number;
+}
+interface QualityBand { key: string; label: string; min_score: number; max_score: number; tone: 'good' | 'warn' | 'bad'; }
+interface QualityRule { key: string; label: string; penalty: number; kind: string; fields: string[]; }
+interface QualityConfig { threshold: number; max_score: number; bands: QualityBand[]; rules: QualityRule[]; }
+
+// Styling per band *tone* — the thresholds themselves come from the API
+// payload (/api/monitor/quality-config), never from numbers typed here.
+const TONE_STYLE: Record<QualityBand['tone'], { bar: string; text: string; chip: string }> = {
+  good: { bar: 'bg-green-500',  text: 'text-green-600',  chip: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' },
+  warn: { bar: 'bg-yellow-400', text: 'text-yellow-600', chip: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' },
+  bad:  { bar: 'bg-red-500',    text: 'text-red-600',    chip: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' },
+};
+
+function bandFor(score: number, bands: QualityBand[]): QualityBand | undefined {
+  return bands.find((b) => score >= b.min_score && score <= b.max_score);
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -74,15 +92,18 @@ function timeAgo(iso: string | null): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-function ScoreBar({ score }: { score: number }) {
-  const color = score >= 90 ? 'bg-green-500' : score >= 70 ? 'bg-yellow-400' : 'bg-red-500';
+const NEUTRAL_STYLE = { bar: 'bg-muted-foreground/40', text: 'text-muted-foreground' };
+
+function ScoreBar({ score, bands }: { score: number; bands: QualityBand[] }) {
+  // No band (config still loading or unavailable) → neutral, never red.
+  const band = bandFor(score, bands);
+  const style = band ? TONE_STYLE[band.tone] : NEUTRAL_STYLE;
   return (
     <div className="flex items-center gap-2 min-w-0">
       <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
-        <div className={cn('h-full rounded-full transition-all', color)} style={{ width: `${score}%` }} />
+        <div className={cn('h-full rounded-full transition-all', style.bar)} style={{ width: `${score}%` }} />
       </div>
-      <span className={cn('text-xs font-semibold tabular-nums w-7 shrink-0',
-        score >= 90 ? 'text-green-600' : score >= 70 ? 'text-yellow-600' : 'text-red-600')}>
+      <span className={cn('text-xs font-semibold tabular-nums w-7 shrink-0', style.text)}>
         {score}
       </span>
     </div>
@@ -173,6 +194,7 @@ export default function MonitoringPage() {
   const [flagged, setFlagged] = useState<FlaggedJob[]>([]);
   const [flaggedTotal, setFlaggedTotal] = useState(0);
   const [audit, setAudit] = useState<AuditEvent[]>([]);
+  const [quality, setQuality] = useState<QualityConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
@@ -204,7 +226,16 @@ export default function MonitoringPage() {
     }
   };
 
+  // The rule registry only changes on deploy: fetch it once, outside the poll.
+  const fetchQualityConfig = async () => {
+    try {
+      const res = await fetch('/api/monitor/quality-config');
+      if (res.ok) setQuality(await res.json());
+    } catch { /* leave quality null; copy falls back to neutral wording */ }
+  };
+
   useEffect(() => {
+    fetchQualityConfig();
     fetchAll();
     pollRef.current = setInterval(() => fetchAll(true), 6000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
@@ -228,6 +259,8 @@ export default function MonitoringPage() {
   const maxTimeline = Math.max(...timeline.map((d) => d.count), 1);
   const maxCat = Math.max(...categories.map((c) => c.count), 1);
   const filteredAudit = auditFilter === 'all' ? audit : audit.filter((e) => e.severity === auditFilter);
+  const bands = quality?.bands ?? [];
+  const thresholdLabel = quality ? String(quality.threshold) : '…';
 
   if (loading) {
     return (
@@ -393,8 +426,20 @@ export default function MonitoringPage() {
                 Hallucination &amp; Quality Detection
               </CardTitle>
               <CardDescription className="mt-0.5">
-                Deterministic heuristics flag low-confidence AI extractions (HTML artefacts, missing fields, garbage text).
+                {quality
+                  ? `${quality.rules.length} deterministic rules score each extraction out of ${quality.max_score}; a score below ${quality.threshold} is flagged.`
+                  : 'Deterministic rules score each AI extraction; the rule set is loading.'}
               </CardDescription>
+              {bands.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {bands.map((b) => (
+                    <span key={b.key}
+                      className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium', TONE_STYLE[b.tone].chip)}>
+                      {b.label} {b.min_score}–{b.max_score}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
             <Button size="sm" variant="outline" onClick={handleRunAnalysis} disabled={analyzing}>
               {analyzing
@@ -425,7 +470,7 @@ export default function MonitoringPage() {
           ) : (
             <div className="space-y-2">
               <p className="text-xs text-muted-foreground mb-3">
-                {flaggedTotal} job{flaggedTotal !== 1 ? 's' : ''} flagged — confidence score below 70
+                {flaggedTotal} job{flaggedTotal !== 1 ? 's' : ''} flagged — confidence score below {thresholdLabel}
               </p>
               {flagged.map((job) => (
                 <div key={job.id} className="rounded-lg border border-yellow-400/30 bg-yellow-50/30 dark:bg-yellow-900/5 p-3">
@@ -438,7 +483,7 @@ export default function MonitoringPage() {
                         <Badge variant="secondary" className="text-xs shrink-0">{job.category}</Badge>
                       </div>
                       <div className="mt-1.5">
-                        <ScoreBar score={job.confidence_score ?? 0} />
+                        <ScoreBar score={job.confidence_score ?? 0} bands={bands} />
                       </div>
                       {job.quality_flags?.length > 0 && (
                         <div className="flex flex-wrap gap-1 mt-2">
