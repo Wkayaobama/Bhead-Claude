@@ -1,6 +1,7 @@
 .env
-.appbuilder/
 node_modules
+.pytest_cache
+*.tsbuildinfo
 dist
 __pycache__
 *.pyc
